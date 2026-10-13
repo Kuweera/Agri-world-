@@ -36,10 +36,15 @@ jobs:
       - name: Import project
         run: godot --headless --import || true
 
-      - name: Export debug APK
-        run: godot --headless --verbose --export-debug "Android" build/android/agriworld-debug.apk
+      - name: Export three test APKs
+        run: |
+          for v in test2d test3d main; do
+            sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/$v.tscn\"|" project.godot
+            grep main_scene project.godot
+            godot --headless --verbose --export-debug "Android" build/android/agriworld-$v.apk
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: agriworld-debug-apk
-          path: build/android/agriworld-debug.apk
+          name: agriworld-debug-apks
+          path: build/android/*.apk
