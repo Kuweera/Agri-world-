@@ -38,7 +38,7 @@ jobs:
 
       - name: Export diagnostic APKs
         run: |
-          for v in diag_light diag_nolight diag_ui; do
+          for v in diag_all diag_all_mem diag_all_env; do
             sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/$v.tscn\"|" project.godot
             grep main_scene project.godot
             godot --headless --verbose --export-debug "Android" build/android/agriworld-$v.apk
