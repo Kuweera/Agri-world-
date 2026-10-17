@@ -36,14 +36,22 @@
   Files: scripts/save_manager.gd, game_state.gd (to_dict/from_dict), farm_main.gd, hud.gd,
   tests in scripts/tests/test_game_state.gd. Check CI 'Run logic tests' shows 0 failures.
 
-- Milestone 3 Step A (tractor): files written, NOT yet built or tested on device.
+- Milestone 3 Step A (tractor): verified on device from screenshots: drive mode, steering/gas
+  strips, tool cycling with visible implements, seeding, harvesting, fuel and run time, ~58-61 FPS.
+  (Original note: )
   Manual driving (arcade physics, not VehicleBody3D), follow camera, tools (plough, seeder,
   harvester) that work the tile BEHIND the tractor, fuel + refuel, running hours, save v2.
   Files: scripts/vehicle_data.gd, vehicle_model.gd, tractor_view.gd, drive_controls.gd,
   plus changes to game_state.gd, camera_rig.gd, hud.gd, farm_main.gd.
-- Milestone 3 Step B (automated task): not started.
+- Milestone 3 Step B (autopilot): files written, NOT yet tested on device. The Auto button
+  (drive view) works the whole field with the chosen tool: plans lanes along rows, drives them,
+  pivots between lanes. Stops on: finished, out of fuel, blocked, not enough money, tool
+  changed, or any touch on the steering/gas strips. The headless tests simulate full
+  ploughing, seeding and harvesting jobs. Files: scripts/autopilot.gd, farm_layout.gd.
 
 ## Known issues
+- Autopilot pivots on the spot between lanes (real U-turns do not fit between 1.5-unit rows).
+- Autopilot start is blocked if the tractor is directly behind the farmhouse; it gives up.
 - Original scripts/main.gd hung on the splash screen; cause never confirmed (suspected
   repo typo or path). It is no longer used and can be deleted.
 - scripts/diag.gd and scenes/diag_*.tscn are diagnostics; keep until Stage 1 is verified.
@@ -90,3 +98,13 @@
 7. Fuel drops while moving. At 0 the tractor stops and says Out of fuel. Refuel costs money.
 8. Manage view returns to the farm view. Close and reopen: tractor position, fuel and tool kept.
 9. Old save from before this update still loads (money, crops kept, default tractor added).
+
+## Milestone 3 Step B test checklist
+1. In drive view, pick Tool: Plough on a fresh field and tap Auto: Start. Tractor drives to the
+   field, ploughs row by row (tiles turn dark), pivots at each end, and stops with a finished message.
+2. Pick Seeder and tap Auto again: ploughed tiles get planted (costs money). Money low = stops.
+3. When crops are ripe, pick Harvester and Auto: tractor harvests them.
+4. Touching the steering or gas strip during Auto cancels it and gives you control.
+5. Auto: Stop button stops it. Switching tool or Manage view also stops it.
+6. With Tool: None, or nothing left to do, Auto shows a message and does not start.
+7. Low fuel: it stops with Out of fuel; refuel and start again.
