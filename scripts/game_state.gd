@@ -5,6 +5,7 @@ extends RefCounted
 
 const CropData := preload("res://scripts/crop_data.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
+const FarmLayout := preload("res://scripts/farm_layout.gd")
 
 const COLS := 8
 const ROWS := 8
@@ -16,6 +17,7 @@ var money: int = START_MONEY
 var inventory: Dictionary = {}
 var tiles: Array = []
 var tractor: Dictionary = {}
+var last_work_tile := -1   # not saved: stops a tile being worked twice in one pass
 
 func _init() -> void:
 	tractor = default_tractor()
@@ -141,6 +143,48 @@ func apply_implement(kind: String, i: int, crop_id: String, now: float) -> Strin
 			return "skip"
 		return harvest(i, now)
 	return "Unknown tool"
+
+# Can this tool do something useful on tile i right now?
+func can_work(kind: String, i: int, now: float) -> bool:
+	if not _valid(i):
+		return false
+	var st: String = tiles[i]["state"]
+	if kind == "plough":
+		return st == "unploughed"
+	if kind == "seeder":
+		return st == "ploughed"
+	if kind == "harvester":
+		return is_ripe(i, now)
+	return false
+
+# Field rows (0..ROWS-1) where the tool has at least one tile to work.
+func rows_with_work(kind: String, now: float) -> Array:
+	var rows: Array = []
+	for row in ROWS:
+		for col in COLS:
+			if can_work(kind, row * COLS + col, now):
+				rows.append(row)
+				break
+	return rows
+
+# Works the tile behind the tractor, once each time it enters a new tile.
+# Returns "" (did something), "skip" (nothing to do) or an error message.
+# After "", `last_work_tile` is the tile that changed.
+func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
+	if tractor["implement"] == "none" or absf(float(tractor["speed"])) < 0.1:
+		return "skip"
+	var off: float = cfg["work_offset"]
+	var h: float = tractor["heading"]
+	var idx := FarmLayout.world_to_tile(
+		float(tractor["x"]) - sin(h) * off,
+		float(tractor["z"]) - cos(h) * off)
+	if idx < 0:
+		last_work_tile = -1
+		return "skip"
+	if idx == last_work_tile:
+		return "skip"
+	last_work_tile = idx
+	return apply_implement(tractor["implement"], idx, crop_id, now)
 
 # Buys fuel up to a full tank, as much as the player can afford.
 func refuel() -> String:

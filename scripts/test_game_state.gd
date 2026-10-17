@@ -8,6 +8,9 @@ const CropData := preload("res://scripts/crop_data.gd")
 const SaveManager := preload("res://scripts/save_manager.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const VehicleModel := preload("res://scripts/vehicle_model.gd")
+const FarmLayout := preload("res://scripts/farm_layout.gd")
+const FarmGridScript := preload("res://scripts/farm_grid.gd")
+const AutoPilotScript := preload("res://scripts/autopilot.gd")
 
 var failures := 0
 
@@ -26,6 +29,33 @@ func _cleanup(path: String) -> void:
 func _run(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, frames: int) -> void:
 	for i in frames:
 		VehicleModel.step(v, cfg, throttle, steer, 1.0 / 60.0)
+
+# Simulates an autopilot job headlessly using the same logic as the game.
+func _auto_job(s, kind: String, now0: float) -> Dictionary:
+	var ap = AutoPilotScript.new()
+	var vcfg: Dictionary = VehicleData.VEHICLES["tractor"]
+	s.tractor["implement"] = kind
+	s.tractor["fuel"] = 20.0
+	s.last_work_tile = -1
+	var rows: Array = s.rows_with_work(kind, now0)
+	if not ap.start(s.tractor, rows):
+		return {"started": false}
+	var t := 0.0
+	var dt := 1.0 / 60.0
+	while ap.active and t < 300.0:
+		var ctl: Vector2 = ap.update(s.tractor, dt)
+		VehicleModel.step(s.tractor, vcfg, ctl.x, ctl.y, dt)
+		if ap.working:
+			s.work_with_tractor(vcfg, now0 + t, "beans")
+		t += dt
+	return {"started": true, "time": t, "finished": ap.finished, "message": ap.message}
+
+func _count_state(s, st: String) -> int:
+	var n := 0
+	for tl in s.tiles:
+		if tl["state"] == st:
+			n += 1
+	return n
 
 func _init() -> void:
 	var t0 := 1000.0
@@ -284,6 +314,67 @@ func _init() -> void:
 	tbad.erase("tractor")
 	_check(btest.from_dict(tbad) != "", "rejects v2 save without tractor")
 	_check(btest.money == 321, "rejected tractor saves change nothing")
+
+	# --- Field layout ---
+	_check(FarmLayout.COLS == GameState.COLS and FarmLayout.ROWS == GameState.ROWS, "layout size matches game state")
+	_check(FarmLayout.world_to_tile(FarmLayout.col_x(3), FarmLayout.row_z(5)) == 5 * 8 + 3, "tile centre maps to its own index")
+	_check(FarmLayout.world_to_tile(0.0, 5.0) == -1, "point outside the field is -1")
+	var gridn = FarmGridScript.new()
+	var mismatches := 0
+	for xi in range(-90, 91):
+		for zi in range(-130, 51):
+			var gx := xi * 0.1
+			var gz := zi * 0.1
+			if gridn.world_to_tile(Vector3(gx, 0.0, gz)) != FarmLayout.world_to_tile(gx, gz):
+				mismatches += 1
+	gridn.free()
+	_check(mismatches == 0, "farm_grid and farm_layout agree on every sampled point")
+
+	# --- Work helpers ---
+	var wk = GameState.new()
+	wk.plough(0)
+	_check(wk.can_work("plough", 1, t0) and not wk.can_work("plough", 0, t0), "can_work plough")
+	_check(wk.can_work("seeder", 0, t0) and not wk.can_work("seeder", 1, t0), "can_work seeder")
+	_check(wk.rows_with_work("plough", t0).size() == 8, "plough work on all 8 rows")
+	_check(wk.rows_with_work("harvester", t0).is_empty(), "no harvest work at the start")
+
+	# --- Autopilot (full headless simulation) ---
+	var job = GameState.new()
+	job.money = 5000
+	var res: Dictionary = _auto_job(job, "plough", t0)
+	_check(res["started"], "autopilot starts a ploughing job")
+	_check(res["finished"], "autopilot finishes ploughing (" + str(res.get("message", "")) + ")")
+	_check(res["time"] < 150.0, "ploughing the field takes under 150 s")
+	_check(_count_state(job, "ploughed") == 64, "autopilot ploughs all 64 tiles")
+	_check(job.tractor["fuel"] > 5.0, "ploughing the whole field leaves fuel")
+
+	res = _auto_job(job, "seeder", t0)
+	_check(res["started"] and res["finished"], "autopilot finishes seeding")
+	_check(_count_state(job, "growing") == 64, "autopilot plants all 64 tiles")
+	_check(job.money == 5000 - 64 * 12, "seeding charges 12 per tile")
+
+	res = _auto_job(job, "harvester", t0 + 1000.0)
+	_check(res["started"] and res["finished"], "autopilot finishes harvesting")
+	_check(int(job.inventory.get("beans", 0)) == 64 * 3, "autopilot harvests all 64 tiles")
+	_check(_count_state(job, "ploughed") == 64, "harvested tiles return to ploughed")
+	_check(job.rows_with_work("plough", t0 + 1000.0).is_empty(), "nothing left to plough")
+	_check(not AutoPilotScript.new().start(job.tractor, []), "autopilot refuses an empty job")
+
+	# Partial job: only some rows need work
+	var part = GameState.new()
+	for pr in [1, 2, 5]:
+		for pc in 8:
+			part.plough(pr * 8 + pc)
+	res = _auto_job(part, "plough", t0)
+	_check(res["finished"] and _count_state(part, "unploughed") == 0, "autopilot ploughs only the rows that need it")
+
+	# Blocked: tractor behind the farmhouse cannot reach the corridor
+	var blk = GameState.new()
+	blk.tractor["x"] = 0.0
+	blk.tractor["z"] = 10.5
+	blk.tractor["heading"] = 0.0
+	res = _auto_job(blk, "plough", t0)
+	_check(res["started"] and not res["finished"], "autopilot gives up when blocked")
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)
