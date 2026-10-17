@@ -46,7 +46,9 @@ jobs:
 
       - name: Run logic tests
         continue-on-error: true
-        run: godot --headless --script res://scripts/tests/test_game_state.gd
+        run: |
+          ls -la scripts scripts/tests || true
+          godot --headless --script res://scripts/tests/test_game_state.gd
 
       - name: Export game APK
         run: |
