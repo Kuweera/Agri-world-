@@ -1,16 +1,24 @@
 extends CanvasLayer
-# On-screen UI: FPS (top-left), money and stock (top-right), messages (top-centre),
-# selected-tile panel (bottom-left) and action buttons (bottom-right).
+# On-screen UI.
+# Manage mode: tile panel (bottom-left) + action buttons (bottom-right).
+# Drive mode: steering and throttle strips, tool buttons (left), vehicle readout (top).
 
 signal action_pressed(action: String)
 
 const CropData := preload("res://scripts/crop_data.gd")
+const DriveControlsScript := preload("res://scripts/drive_controls.gd")
 
 var stats := Label.new()
 var status := Label.new()
 var msg := Label.new()
+var vehicle_label := Label.new()
+var tile_panel := PanelContainer.new()
 var tile_label := Label.new()
+var action_box := VBoxContainer.new()
+var drive_box := VBoxContainer.new()
 var buttons := {}
+var drive_buttons := {}
+var drive_controls
 var msg_until := 0
 
 func _ready() -> void:
@@ -32,29 +40,49 @@ func _ready() -> void:
 	msg.add_theme_font_size_override("font_size", 30)
 	add_child(msg)
 
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(420, 120)
-	panel.position = Vector2(20, vp.y - 140)
-	add_child(panel)
+	vehicle_label.position = Vector2(vp.x / 2.0 - 300, 116)
+	vehicle_label.size = Vector2(600, 40)
+	vehicle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vehicle_label.add_theme_font_size_override("font_size", 26)
+	add_child(vehicle_label)
+
+	# Manage mode widgets
+	tile_panel.custom_minimum_size = Vector2(420, 120)
+	tile_panel.position = Vector2(20, vp.y - 140)
+	add_child(tile_panel)
 	tile_label.add_theme_font_size_override("font_size", 28)
 	tile_label.text = "Tap a tile"
-	panel.add_child(tile_label)
+	tile_panel.add_child(tile_label)
 
-	var box := VBoxContainer.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.alignment = BoxContainer.ALIGNMENT_END
-	box.position = Vector2(vp.x - 360, 130)
-	box.size = Vector2(340, vp.y - 150)
-	box.add_theme_constant_override("separation", 10)
-	add_child(box)
-	_add_button(box, "plough", "Plough")
+	action_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	action_box.alignment = BoxContainer.ALIGNMENT_END
+	action_box.position = Vector2(vp.x - 360, 130)
+	action_box.size = Vector2(340, vp.y - 150)
+	action_box.add_theme_constant_override("separation", 10)
+	add_child(action_box)
+	_add_button(action_box, buttons, "drive", "Drive tractor")
+	_add_button(action_box, buttons, "plough", "Plough")
 	for id in CropData.CROPS:
 		var c: Dictionary = CropData.CROPS[id]
-		_add_button(box, "plant_" + id, "Plant %s (%d)" % [c["name"], c["seed_cost"]])
-	_add_button(box, "harvest", "Harvest")
-	_add_button(box, "sell", "Sell all")
-	show_actions(["sell"])
+		_add_button(action_box, buttons, "plant_" + id, "Plant %s (%d)" % [c["name"], c["seed_cost"]])
+	_add_button(action_box, buttons, "harvest", "Harvest")
+	_add_button(action_box, buttons, "sell", "Sell all")
 
+	# Drive mode widgets
+	drive_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	drive_box.position = Vector2(20, 130)
+	drive_box.size = Vector2(320, 290)
+	drive_box.add_theme_constant_override("separation", 8)
+	add_child(drive_box)
+	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 64.0, 26)
+	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 64.0, 26)
+	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 64.0, 26)
+	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 64.0, 26)
+
+	drive_controls = DriveControlsScript.new()
+	add_child(drive_controls)
+
+	# Always visible
 	var rb := Button.new()
 	rb.text = "Reset"
 	rb.position = Vector2(20, 56)
@@ -63,14 +91,18 @@ func _ready() -> void:
 	rb.pressed.connect(_on_button.bind("reset"))
 	add_child(rb)
 
-func _add_button(parent: Control, action: String, text: String) -> void:
+	show_actions(["sell", "drive"])
+	set_drive_mode(false)
+
+func _add_button(parent: Control, store: Dictionary, action: String, text: String,
+		w := 340.0, h := 84.0, font_size := 30) -> void:
 	var b := Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(340, 84)
-	b.add_theme_font_size_override("font_size", 30)
+	b.custom_minimum_size = Vector2(w, h)
+	b.add_theme_font_size_override("font_size", font_size)
 	b.pressed.connect(_on_button.bind(action))
 	parent.add_child(b)
-	buttons[action] = b
+	store[action] = b
 
 func _on_button(action: String) -> void:
 	action_pressed.emit(action)
@@ -78,6 +110,27 @@ func _on_button(action: String) -> void:
 func show_actions(names: Array) -> void:
 	for key in buttons:
 		buttons[key].visible = key in names
+
+func set_drive_mode(on: bool) -> void:
+	tile_panel.visible = not on
+	action_box.visible = not on
+	drive_box.visible = on
+	vehicle_label.visible = on
+	drive_controls.visible = on
+	drive_controls.reset()
+
+func set_drive_texts(tool_name: String, seed_name: String) -> void:
+	drive_buttons["implement_next"].text = "Tool: " + tool_name
+	drive_buttons["seed_next"].text = "Seed: " + seed_name
+
+func set_vehicle_text(t: String) -> void:
+	vehicle_label.text = t
+
+func get_steer() -> float:
+	return drive_controls.steer
+
+func get_throttle() -> float:
+	return drive_controls.throttle
 
 func set_tile_text(t: String) -> void:
 	tile_label.text = t

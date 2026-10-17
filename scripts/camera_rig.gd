@@ -20,6 +20,7 @@ var last_pinch := 0.0
 var press_ms := 0
 var moved := 0.0
 var was_multi := false
+var allow_rotate := true   # false while driving: the camera follows the tractor
 
 func _ready() -> void:
 	cam.far = 200.0
@@ -47,7 +48,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		touches[event.index] = event.position
 		moved += event.relative.length()
 		if touches.size() == 1:
-			yaw -= event.relative.x * 0.005
+			if allow_rotate:
+				yaw -= event.relative.x * 0.005
 			pitch = clampf(pitch + event.relative.y * 0.005, 0.35, 1.35)
 		elif touches.size() >= 2:
 			var pts: Array = touches.values()
@@ -56,6 +58,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				dist = clampf(dist - (d - last_pinch) * 0.03, min_dist, max_dist)
 			last_pinch = d
 		_apply()
+
+# Public so the main script can reposition the camera every frame.
+func apply_view() -> void:
+	_apply()
 
 func _apply() -> void:
 	cam.position = Vector3(
