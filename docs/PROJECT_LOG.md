@@ -12,6 +12,10 @@
 - Game logic (scripts/game_state.gd) has no nodes; time is passed in, so it can be tested headless.
 - Crop numbers live in scripts/crop_data.gd (growth times are short for testing).
 - Touch: emulate_mouse_from_touch=true so Buttons receive touches (was false in Stage 0/1).
+- Save: versioned JSON at user://save.json (schema_version 1), temp file + .bak backup,
+  validated before applying, autosave after each action and when the app pauses/closes.
+- Offline growth comes from stored unix timestamps. Changing the phone clock affects the
+  OFFLINE game only; online play will use server time.
 
 ## Status
 - Stage 0 (toolchain proof): DONE and tested on device. ~60 FPS, ~21 MB, orbit + pinch zoom work.
@@ -21,10 +25,12 @@
   the selection, pinch zoom limits.
   Files: scenes/main.tscn, scripts/farm_main.gd, farm_grid.gd, camera_rig.gd, hud.gd.
   Verified on device: drag/pinch do not select, outside tap clears selection, zoom works.
-- Milestone 2 Step A (plough, plant maize/beans, grow, harvest, money, stock, sell): files
-  written, NOT yet built or tested on device. CI runs a syntax check and logic tests
-  (scripts/tests/test_game_state.gd); check those log steps show PASS lines.
-- Milestone 2 Step B (save/load): not started.
+- Milestone 2 Step A (plough, plant maize/beans, grow, harvest, money, stock, sell): verified
+  on device from screenshots (money 468 after planting both crops, 570 after selling 4 maize +
+  3 beans, matching the logic tests; buttons respond).
+- Milestone 2 Step B (save/load, offline growth, Reset button): files written, NOT yet tested.
+  Files: scripts/save_manager.gd, game_state.gd (to_dict/from_dict), farm_main.gd, hud.gd,
+  tests in scripts/tests/test_game_state.gd. Check CI 'Run logic tests' shows 0 failures.
 
 ## Known issues
 - Original scripts/main.gd hung on the splash screen; cause never confirmed (suspected
@@ -52,3 +58,11 @@
 7. Sell all: money rises by 60, stock empty.
 8. Errors: with money too low, planting shows "Not enough money".
 9. Buttons do not rotate the camera or select a tile behind them.
+
+## Milestone 2 Step B test checklist
+1. Plant a crop, swipe the app away, reopen: farm, money and the growing crop are still there.
+2. Plant a crop, close the app, wait over 40 s, reopen: message says crops are ripe.
+3. Harvest and sell, close and reopen: money and empty stock are kept.
+4. Tap Reset (top-left) once: message asks to tap again. Tap again within 3 s: farm resets.
+   Close and reopen: the reset farm is kept. Waiting more than 3 s makes it disarm.
+5. Money, stock and tile states never look corrupted after repeated close/reopen.
