@@ -36,6 +36,18 @@ jobs:
       - name: Import project
         run: godot --headless --import || true
 
+      - name: Syntax check scripts
+        continue-on-error: true
+        run: |
+          for f in farm_main farm_grid camera_rig hud game_state crop_data; do
+            echo "== $f"
+            godot --headless --check-only --script res://scripts/$f.gd || echo "SYNTAX FAIL: $f"
+          done
+
+      - name: Run logic tests
+        continue-on-error: true
+        run: godot --headless --script res://scripts/tests/test_game_state.gd
+
       - name: Export diagnostic APKs
         run: |
           for v in main diag_all_env; do
