@@ -167,6 +167,29 @@ func rows_with_work(kind: String, now: float) -> Array:
 				break
 	return rows
 
+# How many tiles the tool could work right now.
+func count_work(kind: String, now: float) -> int:
+	var n := 0
+	for i in tiles.size():
+		if can_work(kind, i, now):
+			n += 1
+	return n
+
+# One job per row that needs work: {"row", "c0", "c1"} (first and last column to visit).
+func jobs_for(kind: String, now: float) -> Array:
+	var jobs: Array = []
+	for row in ROWS:
+		var c0 := -1
+		var c1 := -1
+		for col in COLS:
+			if can_work(kind, row * COLS + col, now):
+				if c0 < 0:
+					c0 = col
+				c1 = col
+		if c0 >= 0:
+			jobs.append({"row": row, "c0": c0, "c1": c1})
+	return jobs
+
 # Works the tile behind the tractor, once each time it enters a new tile.
 # Returns "" (did something), "skip" (nothing to do) or an error message.
 # After "", `last_work_tile` is the tile that changed.

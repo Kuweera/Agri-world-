@@ -27,6 +27,9 @@ var seed_crop := "maize"
 var dirty := false
 var save_timer := 0.0
 var empty_warned := false
+var auto_pass := 0       # which autopilot pass we are on (max 3)
+var pass_worked := 0     # tiles worked in this pass
+var job_worked := 0      # tiles worked in the whole autopilot job
 
 func _ready() -> void:
 	var sun := DirectionalLight3D.new()
@@ -177,6 +180,8 @@ func _vehicle_text(tr: Dictionary) -> String:
 func _apply_work() -> void:
 	var res: String = state.work_with_tractor(cfg, _now(), seed_crop)
 	if res == "":
+		job_worked += 1
+		pass_worked += 1
 		_refresh_tile(state.last_work_tile)
 		_update_ui()
 		dirty = true
@@ -196,31 +201,87 @@ func _toggle_auto() -> void:
 	if kind == "none":
 		hud.set_message("Pick a tool first")
 		return
-	var rows: Array = state.rows_with_work(kind, _now())
-	if rows.is_empty():
+	var now := _now()
+	var jobs: Array = state.jobs_for(kind, now)
+	if jobs.is_empty():
 		hud.set_message("Nothing to do for this tool")
 		return
 	if float(state.tractor["fuel"]) < 1.0:
 		hud.set_message("Refuel first")
 		return
 	state.last_work_tile = -1
-	if autopilot.start(state.tractor, rows):
-		hud.set_auto_active(true)
-		hud.set_message("Autopilot on")
+	auto_pass = 1
+	job_worked = 0
+	pass_worked = 0
+	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"])):
+		return
+	hud.set_auto_active(true)
+	var note := "Autopilot on"
+	var need: float = autopilot.estimate_fuel(state.tractor, cfg)
+	if float(state.tractor["fuel"]) < need:
+		note = "Autopilot on - low fuel (need ~%d)" % int(ceil(need))
+	if kind == "seeder":
+		var n: int = state.count_work(kind, now)
+		var cost: int = CropData.CROPS[seed_crop]["seed_cost"]
+		if state.money < n * cost:
+			note = "Autopilot on - money covers %d of %d tiles" % [int(state.money / cost), n]
+	hud.set_message(note, 4000)
+
+func _count_tiles(st: String) -> int:
+	var n := 0
+	for t in state.tiles:
+		if t["state"] == st:
+			n += 1
+	return n
+
+# What was done, why it stopped and what is left.
+func _auto_summary(kind: String) -> String:
+	var text := ""
+	if autopilot.finished:
+		text = "Autopilot finished: %d tiles" % job_worked
+	else:
+		text = "%s: %d tiles done" % [autopilot.message, job_worked]
+	var now := _now()
+	if kind == "harvester":
+		var ripe: int = state.count_work(kind, now)
+		var unripe := _count_tiles("growing") - ripe
+		if ripe > 0:
+			text += ", %d ripe left" % ripe
+		if unripe > 0:
+			text += ", %d still growing" % unripe
+	elif kind == "seeder":
+		var unplanted := _count_tiles("ploughed")
+		if unplanted > 0:
+			text += ", %d not planted" % unplanted
+	elif kind == "plough":
+		var raw := _count_tiles("unploughed")
+		if raw > 0:
+			text += ", %d not ploughed" % raw
+	return text
 
 func _stop_auto(reason: String) -> void:
+	var kind: String = state.tractor["implement"]
 	autopilot.stop(reason)
 	hud.set_auto_active(false)
 	if reason != "":
-		hud.set_message(reason)
+		hud.set_message(_auto_summary(kind), 5000)
 	dirty = true
 
 func _auto_ended() -> void:
-	hud.set_auto_active(false)
+	var kind: String = state.tractor["implement"]
 	if autopilot.finished:
-		hud.set_message("Autopilot finished")
-	else:
-		hud.set_message(autopilot.message)
+		# More work may have appeared during the pass (crops ripening, missed
+		# tiles). Look again and go where work is still needed, up to 3 passes.
+		var jobs: Array = state.jobs_for(kind, _now())
+		if not jobs.is_empty() and pass_worked > 0 and auto_pass < 3:
+			auto_pass += 1
+			pass_worked = 0
+			state.last_work_tile = -1
+			if autopilot.start(state.tractor, jobs, float(cfg["work_offset"])):
+				hud.set_message("Autopilot: pass %d" % auto_pass)
+				return
+	hud.set_auto_active(false)
+	hud.set_message(_auto_summary(kind), 5000)
 	_save()
 
 # ---- Mode switching ----

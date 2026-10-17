@@ -31,14 +31,14 @@ func _run(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, frames:
 		VehicleModel.step(v, cfg, throttle, steer, 1.0 / 60.0)
 
 # Simulates an autopilot job headlessly using the same logic as the game.
-func _auto_job(s, kind: String, now0: float) -> Dictionary:
+func _auto_job(s, kind: String, now0: float, fuel: float = 20.0) -> Dictionary:
 	var ap = AutoPilotScript.new()
 	var vcfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	s.tractor["implement"] = kind
-	s.tractor["fuel"] = 20.0
+	s.tractor["fuel"] = fuel
 	s.last_work_tile = -1
-	var rows: Array = s.rows_with_work(kind, now0)
-	if not ap.start(s.tractor, rows):
+	var jobs: Array = s.jobs_for(kind, now0)
+	if not ap.start(s.tractor, jobs, float(vcfg["work_offset"])):
 		return {"started": false}
 	var t := 0.0
 	var dt := 1.0 / 60.0
@@ -48,7 +48,7 @@ func _auto_job(s, kind: String, now0: float) -> Dictionary:
 		if ap.working:
 			s.work_with_tractor(vcfg, now0 + t, "beans")
 		t += dt
-	return {"started": true, "time": t, "finished": ap.finished, "message": ap.message}
+	return {"started": true, "time": t, "finished": ap.finished, "message": ap.message, "est": 0.0}
 
 func _count_state(s, st: String) -> int:
 	var n := 0
@@ -358,7 +358,7 @@ func _init() -> void:
 	_check(int(job.inventory.get("beans", 0)) == 64 * 3, "autopilot harvests all 64 tiles")
 	_check(_count_state(job, "ploughed") == 64, "harvested tiles return to ploughed")
 	_check(job.rows_with_work("plough", t0 + 1000.0).is_empty(), "nothing left to plough")
-	_check(not AutoPilotScript.new().start(job.tractor, []), "autopilot refuses an empty job")
+	_check(not AutoPilotScript.new().start(job.tractor, [], 1.8), "autopilot refuses an empty job")
 
 	# Partial job: only some rows need work
 	var part = GameState.new()
@@ -375,6 +375,63 @@ func _init() -> void:
 	blk.tractor["heading"] = 0.0
 	res = _auto_job(blk, "plough", t0)
 	_check(res["started"] and not res["finished"], "autopilot gives up when blocked")
+
+	# --- Autopilot: only goes where work is needed ---
+	var jt = GameState.new()
+	for jr in 8:
+		for jc in 8:
+			jt.plough(jr * 8 + jc)
+	jt.tiles[3 * 8 + 2]["state"] = "unploughed"
+	jt.tiles[3 * 8 + 4]["state"] = "unploughed"
+	jt.tiles[6 * 8 + 3]["state"] = "unploughed"
+	var jobs_t: Array = jt.jobs_for("plough", t0)
+	_check(jobs_t.size() == 2, "jobs_for lists only rows with work")
+	_check(jobs_t[0]["row"] == 3 and jobs_t[0]["c0"] == 2 and jobs_t[0]["c1"] == 4, "job covers only the columns that need work")
+	_check(jt.count_work("plough", t0) == 3, "count_work counts workable tiles")
+	res = _auto_job(jt, "plough", t0)
+	_check(res["finished"] and _count_state(jt, "unploughed") == 0, "autopilot ploughs just those tiles")
+	_check(res["time"] < 40.0, "partial job is quick (" + str(res["time"]) + " s)")
+
+	# Resume: stops when fuel runs out, then carries on with what is left
+	var lowf = GameState.new()
+	res = _auto_job(lowf, "plough", t0, 3.0)
+	var done_before := _count_state(lowf, "ploughed")
+	_check(not res["finished"] and res["message"] == "Out of fuel", "autopilot stops when fuel runs out")
+	_check(done_before > 0 and done_before < 64, "some tiles done before fuel ran out (" + str(done_before) + ")")
+	res = _auto_job(lowf, "plough", t0)
+	_check(res["finished"] and _count_state(lowf, "ploughed") == 64, "second run finishes the rest")
+	_check(res["time"] < 70.0, "second run only does what is left (" + str(res["time"]) + " s)")
+
+	# Starting where the last job ended
+	var endr = GameState.new()
+	for er in 8:
+		for ec in 8:
+			endr.plough(er * 8 + ec)
+	for ec2 in 8:
+		endr.tiles[7 * 8 + ec2]["state"] = "unploughed"
+	endr.tractor["x"] = 7.8
+	endr.tractor["z"] = 1.25
+	endr.tractor["heading"] = PI / 2.0
+	res = _auto_job(endr, "plough", t0)
+	_check(res["finished"] and res["time"] < 15.0, "nearby row is done quickly (" + str(res["time"]) + " s)")
+	var far = GameState.new()
+	for fr in 8:
+		for fc in 8:
+			far.plough(fr * 8 + fc)
+	for fc2 in 8:
+		far.tiles[0 * 8 + fc2]["state"] = "unploughed"
+	far.tractor["x"] = 7.8
+	far.tractor["z"] = 1.25
+	far.tractor["heading"] = PI / 2.0
+	res = _auto_job(far, "plough", t0)
+	_check(res["finished"] and res["time"] < 20.0, "distant row does not re-drive finished rows (" + str(res["time"]) + " s)")
+
+	# Fuel estimate
+	var est_state = GameState.new()
+	var est_ap = AutoPilotScript.new()
+	est_ap.start(est_state.tractor, est_state.jobs_for("plough", t0), float(cfg["work_offset"]))
+	var est: float = est_ap.estimate_fuel(est_state.tractor, cfg)
+	_check(est > 8.0 and est < 14.0, "fuel estimate for a full field is realistic (" + str(est) + ")")
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)

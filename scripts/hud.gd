@@ -34,8 +34,8 @@ func _ready() -> void:
 	status.add_theme_font_size_override("font_size", 28)
 	add_child(status)
 
-	msg.position = Vector2(vp.x / 2.0 - 250, 70)
-	msg.size = Vector2(500, 40)
+	msg.position = Vector2(vp.x / 2.0 - 450, 70)
+	msg.size = Vector2(900, 40)
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	msg.add_theme_font_size_override("font_size", 30)
 	add_child(msg)
@@ -142,9 +142,9 @@ func set_tile_text(t: String) -> void:
 func set_status(t: String) -> void:
 	status.text = t
 
-func set_message(t: String) -> void:
+func set_message(t: String, ms: int = 2500) -> void:
 	msg.text = t
-	msg_until = Time.get_ticks_msec() + 2500
+	msg_until = Time.get_ticks_msec() + ms
 
 func _process(_delta: float) -> void:
 	var mem := OS.get_static_memory_usage() / 1048576.0
