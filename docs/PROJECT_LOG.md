@@ -46,10 +46,17 @@
 - Milestone 3 Step B (autopilot): files written, NOT yet tested on device. The Auto button
   (drive view) works the whole field with the chosen tool: plans lanes along rows, drives them,
   pivots between lanes. Stops on: finished, out of fuel, blocked, not enough money, tool
-  changed, or any touch on the steering/gas strips. The headless tests simulate full
+  changed, or any touch on the steering/gas strips.
+  Reported on device: did not finish whole jobs and re-drove finished rows. Likely causes:
+  fuel/money ran out, crops not yet ripe, and always starting from row 0. Fixed: lanes now cover
+  only the columns that need work, start from the end nearest the tractor, up to 3 passes
+  (re-detects work), fuel/money warning at start, summary message with the reason it stopped. The headless tests simulate full
   ploughing, seeding and harvesting jobs. Files: scripts/autopilot.gd, farm_layout.gd.
 
 ## Known issues
+- CI 'Run logic tests' failed with File not found: scripts/tests/test_game_state.gd was missing
+  from the repo (wrong folder or name). The tests have not run yet. Create it at exactly
+  scripts/tests/test_game_state.gd.
 - Autopilot pivots on the spot between lanes (real U-turns do not fit between 1.5-unit rows).
 - Autopilot start is blocked if the tractor is directly behind the farmhouse; it gives up.
 - Original scripts/main.gd hung on the splash screen; cause never confirmed (suspected
