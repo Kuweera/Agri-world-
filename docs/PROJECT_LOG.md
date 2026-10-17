@@ -12,7 +12,10 @@
 - Game logic (scripts/game_state.gd) has no nodes; time is passed in, so it can be tested headless.
 - Crop numbers live in scripts/crop_data.gd (growth times are short for testing).
 - Touch: emulate_mouse_from_touch=true so Buttons receive touches (was false in Stage 0/1).
-- Save: versioned JSON at user://save.json (schema_version 1), temp file + .bak backup,
+- Vehicles: pure model (vehicle_model.gd) + config (vehicle_data.gd); tractor state lives in
+  GameState.tractor. Driving controls are two touch strips handled in _input() by touch index,
+  because Buttons only see one touch at a time.
+- Save: versioned JSON at user://save.json (schema_version 2; v1 saves are migrated, adding a default tractor), temp file + .bak backup,
   validated before applying, autosave after each action and when the app pauses/closes.
 - Offline growth comes from stored unix timestamps. Changing the phone clock affects the
   OFFLINE game only; online play will use server time.
@@ -28,9 +31,17 @@
 - Milestone 2 Step A (plough, plant maize/beans, grow, harvest, money, stock, sell): verified
   on device from screenshots (money 468 after planting both crops, 570 after selling 4 maize +
   3 beans, matching the logic tests; buttons respond).
-- Milestone 2 Step B (save/load, offline growth, Reset button): files written, NOT yet tested.
+- Milestone 2 Step B (save/load, offline growth, Reset button): files written, results from
+  device not yet reported to me.
   Files: scripts/save_manager.gd, game_state.gd (to_dict/from_dict), farm_main.gd, hud.gd,
   tests in scripts/tests/test_game_state.gd. Check CI 'Run logic tests' shows 0 failures.
+
+- Milestone 3 Step A (tractor): files written, NOT yet built or tested on device.
+  Manual driving (arcade physics, not VehicleBody3D), follow camera, tools (plough, seeder,
+  harvester) that work the tile BEHIND the tractor, fuel + refuel, running hours, save v2.
+  Files: scripts/vehicle_data.gd, vehicle_model.gd, tractor_view.gd, drive_controls.gd,
+  plus changes to game_state.gd, camera_rig.gd, hud.gd, farm_main.gd.
+- Milestone 3 Step B (automated task): not started.
 
 ## Known issues
 - Original scripts/main.gd hung on the splash screen; cause never confirmed (suspected
@@ -66,3 +77,16 @@
 4. Tap Reset (top-left) once: message asks to tap again. Tap again within 3 s: farm resets.
    Close and reopen: the reset farm is kept. Waiting more than 3 s makes it disarm.
 5. Money, stock and tile states never look corrupted after repeated close/reopen.
+
+## Milestone 3 Step A test checklist
+1. Manage view shows a Drive tractor button (bottom-right) and a tractor near the field.
+2. Tap Drive tractor: camera follows behind the tractor; steering strip (bottom-left),
+   gas strip (bottom-right), tool buttons (left) and a Fuel/Speed/Run readout appear.
+3. Hold the gas strip above its centre line: tractor drives forward. Below: reverses slower.
+4. Hold both strips at once (one finger each): the tractor steers while driving.
+5. Tractor cannot leave the fence or drive through the farmhouse.
+6. Tool: Plough, drive over unploughed tiles: they turn dark. Tool: Seeder over ploughed
+   tiles: plants the chosen seed (costs money). Tool: Harvester over ripe crops: stock rises.
+7. Fuel drops while moving. At 0 the tractor stops and says Out of fuel. Refuel costs money.
+8. Manage view returns to the farm view. Close and reopen: tractor position, fuel and tool kept.
+9. Old save from before this update still loads (money, crops kept, default tractor added).
