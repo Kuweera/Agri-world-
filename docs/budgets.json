@@ -1,0 +1,7 @@
+{
+  "target_device": "TECNO Pop 7 (PowerVR GE8322)",
+  "max_apk_size_mb": 50.0,
+  "max_texture_atlas_size": 1024,
+  "max_visible_triangles": 60000,
+  "max_draw_calls": 150
+}
