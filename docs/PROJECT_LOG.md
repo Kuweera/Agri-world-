@@ -64,6 +64,16 @@
   possible cause of FPS hitches), drive camera raised. Files: settings.gd, crop_models.gd,
   farm_grid.gd, hud.gd, farm_main.gd, game_state.gd.
 
+- Visual overhaul (written, NOT yet tested on device): continuous ploughed/raw/stubble ground
+  (no gaps), furrows, grass tufts, realistic stylised maize and bean plants (3 growth stages,
+  crop detail 0/1), terrain with colour variation and distant hills, fence, trees, detailed
+  farmhouse, blob shadows when shadows are off, procedural sky on Medium/High, detailed tractor
+  with spinning lugged wheels, free orbit camera while driving (Camera: behind button), harvest
+  leaves stubble that must be ploughed again (HARVEST_LEAVES_STUBBLE in game_state.gd).
+  New files: mesh_builder.gd, tile_models.gd, farm_scenery.gd. Rewritten: crop_models.gd,
+  farm_grid.gd, tractor_view.gd, farm_main.gd. Real photoreal crops would need textured .glb
+  assets (e.g. free CC0 packs) uploaded to the repo.
+
 ## Known issues
 - FPS: mostly 54-61 on the TECNO BF6, but dips seen at 44 (harvesting) and 36 (manage view,
   empty field), so not caused by crops alone. Cause unknown (heat, GC, screenshot?). Add an
@@ -142,3 +152,14 @@
 5. Text is readable over crops (black outline). Strips dim while Auto runs but still cancel it.
 6. Spend all money with nothing to sell: after a moment you get a Farm grant of 100.
 7. Drive for a few minutes: note the FPS low value and whether hitches are gone.
+
+## Visual overhaul test checklist
+1. App starts without hanging (compare FPS readout on Low, Medium, High).
+2. Field is one continuous brown surface; ploughed land has furrows; no green lines between tiles.
+3. Maize looks like maize (stalk, drooping leaves, cobs, tassel); beans look like bean bushes
+   (flowers then pods). Seedlings are small.
+4. After harvest the tile shows stubble; selecting it offers Plough; the seeder skips it.
+5. In drive view, drag on empty screen to orbit around the tractor, pinch to zoom close up,
+   tap Camera: behind to swing the view back. View the tractor from all sides.
+6. Trees, fence, farmhouse details, hills in the distance. Medium/High: sky and shadows.
+7. Note the FPS low number on each quality level and tell me if Low is still smooth.
