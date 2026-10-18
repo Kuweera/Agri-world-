@@ -1,5 +1,5 @@
 extends Node3D
-# Entry point: wires light, sky, farm, tractor, camera, HUD, game state and saving.
+# Entry point: wires light, sky, farm, tractor, camera, HUD, game state, settings and saving.
 
 const CameraRigScript := preload("res://scripts/camera_rig.gd")
 const FarmGridScript := preload("res://scripts/farm_grid.gd")
@@ -11,13 +11,19 @@ const VehicleData := preload("res://scripts/vehicle_data.gd")
 const VehicleModel := preload("res://scripts/vehicle_model.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
+const SettingsScript := preload("res://scripts/settings.gd")
 
+const QUALITY_NAMES := ["Low", "Medium", "High"]
+const DRIVE_SAVE_INTERVAL := 8.0   # seconds; saving more often can cause hitches on slow storage
+
+var sun: DirectionalLight3D
 var rig
 var grid
 var hud
 var state
 var tractor_view
 var autopilot
+var settings: Dictionary = {}
 var cfg: Dictionary = {}
 var selected := -1
 var refresh_timer := 0.0
@@ -30,11 +36,15 @@ var empty_warned := false
 var auto_pass := 0       # which autopilot pass we are on (max 3)
 var pass_worked := 0     # tiles worked in this pass
 var job_worked := 0      # tiles worked in the whole autopilot job
+var vehicle_text_timer := 0.0
 
 func _ready() -> void:
-	var sun := DirectionalLight3D.new()
+	settings = SettingsScript.load_settings()
+
+	sun = DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -35, 0)
 	add_child(sun)
+	_apply_quality(int(settings["quality"]))
 
 	var we := WorldEnvironment.new()
 	var env := Environment.new()
@@ -63,6 +73,8 @@ func _ready() -> void:
 
 	hud = HudScript.new()
 	add_child(hud)
+	hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
+	hud.set_debug_visible(bool(settings["debug"]))
 
 	rig.tapped.connect(_on_tapped)
 	hud.action_pressed.connect(_on_action)
@@ -80,6 +92,16 @@ func _ready() -> void:
 			hud.set_message("Welcome back!")
 	elif load_result == "corrupt":
 		hud.set_message("Save was damaged - new farm started")
+	_check_relief()
+
+# Low: no shadows (default, safest for weak phones). Medium/High: sun shadows.
+func _apply_quality(q: int) -> void:
+	sun.shadow_enabled = q > 0
+	if q > 0:
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = 30.0 if q == 1 else 45.0
+		sun.shadow_bias = 0.08
+		RenderingServer.directional_shadow_atlas_set_size(1024 if q == 1 else 2048, true)
 
 func _now() -> float:
 	return Time.get_unix_time_from_system()
@@ -113,6 +135,14 @@ func _update_drive_texts() -> void:
 	var crop_name: String = CropData.CROPS[seed_crop]["name"]
 	hud.set_drive_texts(tool_name, crop_name)
 
+# Out of money with nothing to sell and nothing growing: a small grant.
+func _check_relief() -> void:
+	var given: int = state.relief_grant()
+	if given > 0:
+		hud.set_message("Farm grant: +%d (you were out of money)" % given, 4000)
+		dirty = true
+		_update_ui()
+
 # ---- Frame update ----
 
 func _process(delta: float) -> void:
@@ -122,7 +152,7 @@ func _process(delta: float) -> void:
 
 	if dirty:
 		save_timer += delta
-		if save_timer >= 2.0:
+		if save_timer >= DRIVE_SAVE_INTERVAL:
 			save_timer = 0.0
 			_save()
 
@@ -135,6 +165,7 @@ func _process(delta: float) -> void:
 			_refresh_tile(i)
 	if selected >= 0 and state.tiles[selected]["state"] == "growing":
 		_update_ui()
+	_check_relief()
 
 func _drive(dt: float) -> void:
 	var tr: Dictionary = state.tractor
@@ -167,7 +198,11 @@ func _drive(dt: float) -> void:
 	rig.position = Vector3(tr["x"], 0.0, tr["z"])
 	rig.yaw = lerp_angle(rig.yaw, float(tr["heading"]) + PI, minf(1.0, 4.0 * dt))
 	rig.apply_view()
-	hud.set_vehicle_text(_vehicle_text(tr))
+
+	vehicle_text_timer += dt
+	if vehicle_text_timer >= 0.2:
+		vehicle_text_timer = 0.0
+		hud.set_vehicle_text(_vehicle_text(tr))
 	if absf(float(tr["speed"])) > 0.05:
 		dirty = true
 
@@ -185,6 +220,7 @@ func _apply_work() -> void:
 		_refresh_tile(state.last_work_tile)
 		_update_ui()
 		dirty = true
+		_check_relief()
 	elif res != "skip":
 		if autopilot.active:
 			_stop_auto(res)
@@ -294,10 +330,11 @@ func _enter_drive() -> void:
 	if old >= 0:
 		_refresh_tile(old)
 	rig.allow_rotate = false
-	rig.pitch = 0.55
-	rig.dist = 9.0
+	rig.pitch = 0.7
+	rig.dist = 10.0
 	state.last_work_tile = -1
 	empty_warned = false
+	vehicle_text_timer = 1.0
 	hud.set_drive_mode(true)
 	hud.set_auto_active(false)
 	_update_drive_texts()
@@ -361,6 +398,19 @@ func _on_action(action: String) -> void:
 	if action == "reset":
 		_handle_reset()
 		return
+	if action.begins_with("quality_"):
+		settings["quality"] = clampi(int(action.substr(8)), 0, 2)
+		_apply_quality(int(settings["quality"]))
+		SettingsScript.save_settings(settings)
+		hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
+		hud.set_message("Quality: " + QUALITY_NAMES[int(settings["quality"])])
+		return
+	if action == "debug":
+		settings["debug"] = not bool(settings["debug"])
+		SettingsScript.save_settings(settings)
+		hud.set_debug_visible(bool(settings["debug"]))
+		hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
+		return
 	if action == "drive":
 		_enter_drive()
 		return
@@ -410,6 +460,7 @@ func _on_action(action: String) -> void:
 	if selected >= 0:
 		_refresh_tile(selected)
 	_update_ui()
+	_check_relief()
 
 func _update_ui() -> void:
 	var now := _now()

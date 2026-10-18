@@ -11,6 +11,7 @@ const COLS := 8
 const ROWS := 8
 const START_MONEY := 500
 const SCHEMA_VERSION := 2
+const RELIEF_AMOUNT := 100
 const STATES := ["unploughed", "ploughed", "growing"]
 
 var money: int = START_MONEY
@@ -143,6 +144,24 @@ func apply_implement(kind: String, i: int, crop_id: String, now: float) -> Strin
 			return "skip"
 		return harvest(i, now)
 	return "Unknown tool"
+
+func _min_seed_cost() -> int:
+	var lowest := 1000000
+	for id in CropData.CROPS:
+		lowest = mini(lowest, int(CropData.CROPS[id]["seed_cost"]))
+	return lowest
+
+# Safety net so the farm can never get stuck: if you cannot afford any seed, have
+# nothing to sell and nothing is growing, you receive a small grant.
+# Returns the amount given (0 if none).
+func relief_grant() -> int:
+	if money >= _min_seed_cost() or not inventory.is_empty():
+		return 0
+	for t in tiles:
+		if t["state"] == "growing":
+			return 0
+	money += RELIEF_AMOUNT
+	return RELIEF_AMOUNT
 
 # Can this tool do something useful on tile i right now?
 func can_work(kind: String, i: int, now: float) -> bool:
