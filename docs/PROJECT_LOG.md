@@ -56,6 +56,14 @@
   (re-detects work), fuel/money warning at start, summary message with the reason it stopped. The headless tests simulate full
   ploughing, seeding and harvesting jobs. Files: scripts/autopilot.gd, farm_layout.gd.
 
+- Polish pass (written, NOT yet tested on device): FPS readout (current, 5 s average, 5 s low),
+  Menu with graphics quality Low/Medium/High (Medium/High enable sun shadows; Low is default),
+  debug readout on/off, Reset moved into Menu, outlined HUD text, drive strips dimmed during
+  Auto, merged low-poly crop models (one draw call per tile, 3 growth stages), money safety net
+  (100 grant when broke with no stock and nothing growing), drive autosave every 8 s (was 2 s,
+  possible cause of FPS hitches), drive camera raised. Files: settings.gd, crop_models.gd,
+  farm_grid.gd, hud.gd, farm_main.gd, game_state.gd.
+
 ## Known issues
 - FPS: mostly 54-61 on the TECNO BF6, but dips seen at 44 (harvesting) and 36 (manage view,
   empty field), so not caused by crops alone. Cause unknown (heat, GC, screenshot?). Add an
@@ -124,3 +132,13 @@
 5. Auto: Stop button stops it. Switching tool or Manage view also stops it.
 6. With Tool: None, or nothing left to do, Auto shows a message and does not start.
 7. Low fuel: it stops with Out of fuel; refuel and start again.
+
+## Polish pass test checklist
+1. Top-left shows FPS (current, avg, low) and Mem; a Menu button sits under it.
+2. Menu opens a Settings panel: Low/Medium/High (selected one in brackets), Debug info on/off,
+   Reset farm, Close. Choosing a quality shows a message; the choice is kept after restart.
+3. Low: no shadows. Medium: tractor, house, crops cast shadows. Compare FPS low on each.
+4. Crops now look like plants (maize stalks with cobs when ripe, bean bushes with pods).
+5. Text is readable over crops (black outline). Strips dim while Auto runs but still cancel it.
+6. Spend all money with nothing to sell: after a moment you get a Farm grant of 100.
+7. Drive for a few minutes: note the FPS low value and whether hitches are gone.
