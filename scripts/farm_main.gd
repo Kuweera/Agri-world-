@@ -17,6 +17,8 @@ const QUALITY_NAMES := ["Low", "Medium", "High"]
 const DRIVE_SAVE_INTERVAL := 8.0   # seconds; saving more often can cause hitches on slow storage
 
 var sun: DirectionalLight3D
+var env: Environment
+var sky_obj: Sky
 var rig
 var grid
 var hud
@@ -37,21 +39,33 @@ var auto_pass := 0       # which autopilot pass we are on (max 3)
 var pass_worked := 0     # tiles worked in this pass
 var job_worked := 0      # tiles worked in the whole autopilot job
 var vehicle_text_timer := 0.0
+var last_heading := 0.0
+var cam_resetting := false
 
 func _ready() -> void:
 	settings = SettingsScript.load_settings()
 
 	sun = DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -35, 0)
+	sun.light_color = Color(1.0, 0.96, 0.88)
+	sun.light_energy = 1.1
 	add_child(sun)
-	_apply_quality(int(settings["quality"]))
+
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.22, 0.48, 0.85)
+	sky_mat.sky_horizon_color = Color(0.72, 0.84, 0.95)
+	sky_mat.ground_horizon_color = Color(0.72, 0.84, 0.95)
+	sky_mat.ground_bottom_color = Color(0.3, 0.4, 0.25)
+	sky_obj = Sky.new()
+	sky_obj.sky_material = sky_mat
+	sky_obj.radiance_size = Sky.RADIANCE_SIZE_32
 
 	var we := WorldEnvironment.new()
-	var env := Environment.new()
+	env = Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.53, 0.75, 0.95)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.6, 0.6, 0.6)
+	env.ambient_light_color = Color(0.5, 0.54, 0.62)
 	we.environment = env
 	add_child(we)
 
@@ -71,6 +85,8 @@ func _ready() -> void:
 	rig.position = Vector3(0, 0, -1)
 	add_child(rig)
 
+	_apply_quality(int(settings["quality"]))
+
 	hud = HudScript.new()
 	add_child(hud)
 	hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
@@ -79,8 +95,7 @@ func _ready() -> void:
 	rig.tapped.connect(_on_tapped)
 	hud.action_pressed.connect(_on_action)
 
-	for i in state.tiles.size():
-		_refresh_tile(i)
+	_refresh_all_tiles()
 	_update_drive_texts()
 	_update_ui()
 
@@ -94,7 +109,8 @@ func _ready() -> void:
 		hud.set_message("Save was damaged - new farm started")
 	_check_relief()
 
-# Low: no shadows (default, safest for weak phones). Medium/High: sun shadows.
+# Low: flat sky colour, no shadows, lighter crops, blob shadows (safest for weak phones).
+# Medium/High: procedural sky, real sun shadows, full crop detail.
 func _apply_quality(q: int) -> void:
 	sun.shadow_enabled = q > 0
 	if q > 0:
@@ -102,6 +118,13 @@ func _apply_quality(q: int) -> void:
 		sun.directional_shadow_max_distance = 30.0 if q == 1 else 45.0
 		sun.shadow_bias = 0.08
 		RenderingServer.directional_shadow_atlas_set_size(1024 if q == 1 else 2048, true)
+		env.background_mode = Environment.BG_SKY
+		env.sky = sky_obj
+	else:
+		env.background_mode = Environment.BG_COLOR
+	grid.set_detail(0 if q == 0 else 1)
+	grid.set_blob_shadows(q == 0)
+	tractor_view.set_blob_visible(q == 0)
 
 func _now() -> float:
 	return Time.get_unix_time_from_system()
@@ -129,6 +152,10 @@ func _notification(what: int) -> void:
 
 func _refresh_tile(i: int) -> void:
 	grid.refresh_tile(i, state.tiles[i], state.progress(i, _now()), i == selected)
+
+func _refresh_all_tiles() -> void:
+	for i in state.tiles.size():
+		_refresh_tile(i)
 
 func _update_drive_texts() -> void:
 	var tool_name: String = VehicleData.IMPLEMENTS[state.tractor["implement"]]["name"]
@@ -194,9 +221,19 @@ func _drive(dt: float) -> void:
 	if (not autopilot.active) or autopilot.working:
 		_apply_work()
 
-	tractor_view.update_from(tr)
+	tractor_view.update_from(tr, dt)
 	rig.position = Vector3(tr["x"], 0.0, tr["z"])
-	rig.yaw = lerp_angle(rig.yaw, float(tr["heading"]) + PI, minf(1.0, 4.0 * dt))
+
+	# The camera keeps its angle around the tractor (you can drag to orbit freely).
+	# It turns along with the tractor, and "Camera: behind" swings it back.
+	var heading: float = tr["heading"]
+	rig.yaw += angle_difference(last_heading, heading)
+	last_heading = heading
+	if cam_resetting:
+		var target := heading + PI
+		rig.yaw = lerp_angle(rig.yaw, target, minf(1.0, 6.0 * dt))
+		if absf(angle_difference(rig.yaw, target)) < 0.03:
+			cam_resetting = false
 	rig.apply_view()
 
 	vehicle_text_timer += dt
@@ -290,7 +327,7 @@ func _auto_summary(kind: String) -> String:
 		if unplanted > 0:
 			text += ", %d not planted" % unplanted
 	elif kind == "plough":
-		var raw := _count_tiles("unploughed")
+		var raw: int = state.count_work(kind, now)
 		if raw > 0:
 			text += ", %d not ploughed" % raw
 	return text
@@ -329,7 +366,11 @@ func _enter_drive() -> void:
 	selected = -1
 	if old >= 0:
 		_refresh_tile(old)
-	rig.allow_rotate = false
+	var heading: float = state.tractor["heading"]
+	last_heading = heading
+	cam_resetting = false
+	rig.allow_rotate = true
+	rig.yaw = heading + PI
 	rig.pitch = 0.7
 	rig.dist = 10.0
 	state.last_work_tile = -1
@@ -381,8 +422,7 @@ func _handle_reset() -> void:
 			autopilot.stop("")
 		state = GameStateScript.new()
 		selected = -1
-		for i in state.tiles.size():
-			_refresh_tile(i)
+		_refresh_all_tiles()
 		tractor_view.update_from(state.tractor)
 		if driving:
 			_enter_manage()
@@ -401,6 +441,7 @@ func _on_action(action: String) -> void:
 	if action.begins_with("quality_"):
 		settings["quality"] = clampi(int(action.substr(8)), 0, 2)
 		_apply_quality(int(settings["quality"]))
+		_refresh_all_tiles()
 		SettingsScript.save_settings(settings)
 		hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
 		hud.set_message("Quality: " + QUALITY_NAMES[int(settings["quality"])])
@@ -416,6 +457,9 @@ func _on_action(action: String) -> void:
 		return
 	if action == "manage":
 		_enter_manage()
+		return
+	if action == "camera_reset":
+		cam_resetting = true
 		return
 	if action == "auto":
 		_toggle_auto()
@@ -473,6 +517,9 @@ func _update_ui() -> void:
 		match t["state"]:
 			"unploughed":
 				text = head + "Soil: unploughed"
+				actions.append("plough")
+			"stubble":
+				text = head + "Harvested - plough before replanting"
 				actions.append("plough")
 			"ploughed":
 				text = head + "Soil: ploughed\nReady to plant"
