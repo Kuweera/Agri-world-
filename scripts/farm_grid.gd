@@ -12,14 +12,11 @@ var tile_nodes: Array = []
 var mesh_cache: Dictionary = {}
 
 func _ready() -> void:
-	# Clear out old visual architecture arrays if re-initializing
 	tile_nodes.clear()
 	
-	# Instantiate visual nodes for the entire 8x8 layout grid
 	for row in ROWS:
 		for col in COLS:
 			var tm := MeshInstance3D.new()
-			# Center position offsetting based on tile spacing variables
 			tm.position = Vector3(
 				(col - COLS / 2.0) * TILE_SIZE + TILE_SIZE / 2.0,
 				0.0,
@@ -28,7 +25,6 @@ func _ready() -> void:
 			add_child(tm)
 			tile_nodes.append(tm)
 
-# Calculates localized world terrain positions from touch indicators
 func world_to_tile(world_pos: Vector3) -> int:
 	var cx := floori((world_pos.x + (COLS * TILE_SIZE) / 2.0) / TILE_SIZE)
 	var cz := floori((world_pos.z + (ROWS * TILE_SIZE) / 2.0) / TILE_SIZE)
@@ -37,7 +33,6 @@ func world_to_tile(world_pos: Vector3) -> int:
 		return -1
 	return cz * COLS + cx
 
-# Swaps dynamic surface elements based on stage and time metrics
 func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: bool) -> void:
 	if i < 0 or i >= tile_nodes.size():
 		return
@@ -46,16 +41,13 @@ func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: b
 	var state: String = tile_data["state"]
 	var crop_id: String = tile_data["crop"]
 	
-	# Query the 4-stage tracking engine to isolate visual model configuration keys
 	var stage_idx := CropStages.get_stage_index(crop_id, progress)
 	var cache_key := "%s_%s_%d_%s" % [state, crop_id, stage_idx, "sel" if is_selected else "nor"]
 	
-	# Fetch pre-built instance geometries to protect frame rates
 	if mesh_cache.has(cache_key):
 		mi.mesh = mesh_cache[cache_key]
 		return
 		
-	# Fallback generator loop for uncached custom tiles
 	var combined_mesh := ArrayMesh.new()
 	var st_mesh := _generate_base_ground_mesh(state, is_selected)
 	
@@ -70,7 +62,6 @@ func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: b
 		if crop_mesh and crop_mesh.get_surface_count() > 0:
 			var crop_arrays = crop_mesh.surface_get_arrays(0)
 			
-			# Multi-plant density distribution offsets inside a single draw call
 			var p_count: int = CropData.CROPS[crop_id]["visual"]["plants_per_tile"]
 			var verts: PackedVector3Array = crop_arrays[Mesh.ARRAY_VERTEX]
 			var shifted_verts := PackedVector3Array()
@@ -79,7 +70,6 @@ func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: b
 			
 			for p in p_count:
 				var offset_idx := shifted_verts.size()
-				# Grid dispersal math coordinates inside the single 2.0 unit tile boundaries
 				var ox := -0.5 + (p % 2) * 1.0 + (randf() - 0.5) * 0.2
 				var oz := -0.5 + floorf(p / 2.0) * 1.0 + (randf() - 0.5) * 0.2
 				
@@ -107,19 +97,20 @@ func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
 	verts.append(Vector3(h, 0.0, h))
 	verts.append(Vector3(-h, 0.0, h))
 	
+	# FIXED: Added correct index drawing array maps for low-poly tile planes
 	indices.append_array([0, 1, 2, 0, 2, 3])
 	
-	var col := Color(0.22, 0.45, 0.15) # Default grass state
+	var col := Color(0.22, 0.45, 0.15) 
 	match state:
 		"ploughed":
-			col = Color(0.28, 0.20, 0.14) # Rich dark tilled soil
+			col = Color(0.28, 0.20, 0.14) 
 		"growing":
-			col = Color(0.24, 0.18, 0.12) # Hydrated farming ground
+			col = Color(0.24, 0.18, 0.12) 
 		"stubble":
-			col = Color(0.35, 0.30, 0.18) # Harvested field residue layer
+			col = Color(0.35, 0.30, 0.18) 
 			
 	if selected:
-		col = col.lerp(Color(0.95, 0.85, 0.1), 0.35) # Smooth active cell highlight
+		col = col.lerp(Color(0.95, 0.85, 0.1), 0.35) 
 		
 	for i in 4:
 		colors.append(col)
