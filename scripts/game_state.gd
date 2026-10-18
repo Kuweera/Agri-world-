@@ -12,7 +12,9 @@ const ROWS := 8
 const START_MONEY := 500
 const SCHEMA_VERSION := 2
 const RELIEF_AMOUNT := 100
-const STATES := ["unploughed", "ploughed", "growing"]
+const STATES := ["unploughed", "ploughed", "growing", "stubble"]
+# After a harvest the land is left as stubble and must be ploughed again before replanting.
+const HARVEST_LEAVES_STUBBLE := true
 
 var money: int = START_MONEY
 var inventory: Dictionary = {}
@@ -38,9 +40,12 @@ func _valid(i: int) -> bool:
 func plough(i: int) -> String:
 	if not _valid(i):
 		return "Select a tile first"
-	if tiles[i]["state"] != "unploughed":
+	var st: String = tiles[i]["state"]
+	if st == "ploughed":
 		return "Already ploughed"
-	tiles[i]["state"] = "ploughed"
+	if st == "growing":
+		return "Tile is busy"
+	tiles[i]["state"] = "ploughed"   # from unploughed ground or harvested stubble
 	return ""
 
 func plant(i: int, crop_id: String, now: float) -> String:
@@ -49,7 +54,7 @@ func plant(i: int, crop_id: String, now: float) -> String:
 	if not CropData.CROPS.has(crop_id):
 		return "Unknown crop"
 	var t: Dictionary = tiles[i]
-	if t["state"] == "unploughed":
+	if t["state"] == "unploughed" or t["state"] == "stubble":
 		return "Plough the tile first"
 	if t["state"] != "ploughed":
 		return "Tile is busy"
@@ -81,7 +86,7 @@ func harvest(i: int, now: float) -> String:
 	var crop_id: String = tiles[i]["crop"]
 	var amount: int = CropData.CROPS[crop_id]["yield"]
 	inventory[crop_id] = int(inventory.get(crop_id, 0)) + amount
-	tiles[i]["state"] = "ploughed"
+	tiles[i]["state"] = "stubble" if HARVEST_LEAVES_STUBBLE else "ploughed"
 	tiles[i]["crop"] = ""
 	tiles[i]["planted_at"] = 0.0
 	return ""
@@ -132,7 +137,7 @@ func apply_implement(kind: String, i: int, crop_id: String, now: float) -> Strin
 	if kind == "none":
 		return "skip"
 	if kind == "plough":
-		if st != "unploughed":
+		if st != "unploughed" and st != "stubble":
 			return "skip"
 		return plough(i)
 	if kind == "seeder":
@@ -169,7 +174,7 @@ func can_work(kind: String, i: int, now: float) -> bool:
 		return false
 	var st: String = tiles[i]["state"]
 	if kind == "plough":
-		return st == "unploughed"
+		return st == "unploughed" or st == "stubble"
 	if kind == "seeder":
 		return st == "ploughed"
 	if kind == "harvester":

@@ -95,14 +95,15 @@ func _ready() -> void:
 	# Drive mode widgets
 	drive_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	drive_box.position = Vector2(20, 130)
-	drive_box.size = Vector2(320, 360)
-	drive_box.add_theme_constant_override("separation", 8)
+	drive_box.size = Vector2(320, 390)
+	drive_box.add_theme_constant_override("separation", 6)
 	add_child(drive_box)
-	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 64.0, 26)
-	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 64.0, 26)
-	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 320.0, 64.0, 26)
-	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 64.0, 26)
-	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 64.0, 26)
+	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "camera_reset", "Camera: behind", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 58.0, 24)
 
 	drive_controls = DriveControlsScript.new()
 	add_child(drive_controls)

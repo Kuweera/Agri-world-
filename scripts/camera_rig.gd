@@ -8,7 +8,7 @@ signal tapped(screen_pos: Vector2)
 const TAP_MAX_MOVE := 20.0
 const TAP_MAX_MS := 400
 
-@export var min_dist := 6.0
+@export var min_dist := 3.5
 @export var max_dist := 30.0
 
 var yaw := 0.5
@@ -50,7 +50,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if touches.size() == 1:
 			if allow_rotate:
 				yaw -= event.relative.x * 0.005
-			pitch = clampf(pitch + event.relative.y * 0.005, 0.35, 1.35)
+			pitch = clampf(pitch + event.relative.y * 0.005, 0.12, 1.5)
 		elif touches.size() >= 2:
 			var pts: Array = touches.values()
 			var d: float = pts[0].distance_to(pts[1])
