@@ -39,7 +39,7 @@ jobs:
       - name: Syntax check scripts
         continue-on-error: true
         run: |
-          for f in farm_main farm_grid camera_rig hud game_state crop_data save_manager vehicle_data vehicle_model tractor_view drive_controls farm_layout autopilot; do
+          for f in farm_main farm_grid camera_rig hud game_state crop_data save_manager vehicle_data vehicle_model tractor_view drive_controls farm_layout autopilot settings crop_models; do
             echo "== $f"
             godot --headless --check-only --script res://scripts/$f.gd || echo "SYNTAX FAIL: $f"
           done
