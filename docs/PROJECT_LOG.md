@@ -43,7 +43,10 @@
   harvester) that work the tile BEHIND the tractor, fuel + refuel, running hours, save v2.
   Files: scripts/vehicle_data.gd, vehicle_model.gd, tractor_view.gd, drive_controls.gd,
   plus changes to game_state.gd, camera_rig.gd, hud.gd, farm_main.gd.
-- Milestone 3 Step B (autopilot): files written, NOT yet tested on device. The Auto button
+- Milestone 3 Step B (autopilot): VERIFIED on device from screenshots. Full-field runs worked
+  (stock 256 maize + 192 beans = 64 tiles each), low-money warning shown, seeding stops at 0
+  money. Milestone 3 is complete. Logic tests still need confirming (file path fix).
+  (Original note: ) The Auto button
   (drive view) works the whole field with the chosen tool: plans lanes along rows, drives them,
   pivots between lanes. Stops on: finished, out of fuel, blocked, not enough money, tool
   changed, or any touch on the steering/gas strips.
@@ -54,6 +57,12 @@
   ploughing, seeding and harvesting jobs. Files: scripts/autopilot.gd, farm_layout.gd.
 
 ## Known issues
+- FPS: mostly 54-61 on the TECNO BF6, but dips seen at 44 (harvesting) and 36 (manage view,
+  empty field), so not caused by crops alone. Cause unknown (heat, GC, screenshot?). Add an
+  average/minimum FPS readout before adding more content.
+- Economy: money can reach 0 (all spent on seed). Needs a safety net so the player cannot
+  get stuck with no money, no stock and no crops. Prices also need balancing (income per
+  cycle is very high).
 - CI 'Run logic tests' failed with File not found: scripts/tests/test_game_state.gd was missing
   from the repo (wrong folder or name). The tests have not run yet. Create it at exactly
   scripts/tests/test_game_state.gd.
