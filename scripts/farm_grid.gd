@@ -1,157 +1,127 @@
 extends Node3D
-# Presentation only: scenery plus the 8x8 field of tile nodes and the crops on them.
-# The tile DATA lives in game_state.gd. farm_main.gd calls refresh_tile().
 
-const GameStateScript := preload("res://scripts/game_state.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
-const TileModels := preload("res://scripts/tile_models.gd")
-const MeshBuilder := preload("res://scripts/mesh_builder.gd")
-const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
+const CropStages := preload("res://scripts/crop_stages.gd")
 const CropData := preload("res://scripts/crop_data.gd")
 
-const PITCH := 1.5
-const FIELD_CENTER := Vector3(0, 0, -4)
+const COLS := 8
+const ROWS := 8
+const TILE_SIZE := 2.0
 
-var cols: int = GameStateScript.COLS
-var rows: int = GameStateScript.ROWS
 var tile_nodes: Array = []
-var tile_keys: Array = []
-var crop_nodes: Array = []
-var crop_keys: Array = []
-var mesh_cache := {}
-var detail := 1            # crop detail: 0 = lighter, 1 = full
-var mat_vc: StandardMaterial3D
-var cursor: MeshInstance3D
-var cursor_index := -1
-var scenery
-
-static func _h(sd: int) -> float:
-	return fposmod(sin(float(sd) * 12.9898 + 4.1) * 43758.5453, 1.0)
-
-func _variant(i: int, n: int) -> int:
-	return mini(n - 1, int(_h(i * 7 + 3) * float(n)))
+var mesh_cache: Dictionary = {}
 
 func _ready() -> void:
-	mat_vc = MeshBuilder.vc_material()
-	scenery = FarmSceneryScript.new()
-	scenery.build(self, mat_vc)
+	# Clear out old visual architecture arrays if re-initializing
+	tile_nodes.clear()
+	
+	# Instantiate visual nodes for the entire 8x8 layout grid
+	for row in ROWS:
+		for col in COLS:
+			var tm := MeshInstance3D.new()
+			# Center position offsetting based on tile spacing variables
+			tm.position = Vector3(
+				(col - COLS / 2.0) * TILE_SIZE + TILE_SIZE / 2.0,
+				0.0,
+				(row - ROWS / 2.0) * TILE_SIZE + TILE_SIZE / 2.0
+			)
+			add_child(tm)
+			tile_nodes.append(tm)
 
-	# Build all ground and crop meshes now, so nothing is created mid-game.
-	for kind in ["unploughed", "ploughed", "stubble"]:
-		for v in 3:
-			_tile_mesh(kind, v)
-	_prebuild_crops()
+# Calculates localized world terrain positions from touch indicators
+func world_to_tile(world_pos: Vector3) -> int:
+	var cx := floori((world_pos.x + (COLS * TILE_SIZE) / 2.0) / TILE_SIZE)
+	var cz := floori((world_pos.z + (ROWS * TILE_SIZE) / 2.0) / TILE_SIZE)
+	
+	if cx < 0 or cx >= COLS or cz < 0 or cz >= ROWS:
+		return -1
+	return cz * COLS + cx
 
-	for row in rows:
-		for col in cols:
-			var i := row * cols + col
-			var mi := MeshInstance3D.new()
-			mi.material_override = mat_vc
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mi.position = Vector3(
-				FIELD_CENTER.x + (col - (cols - 1) / 2.0) * PITCH, 0.0,
-				FIELD_CENTER.z + (row - (rows - 1) / 2.0) * PITCH)
-			mi.mesh = _tile_mesh("unploughed", _variant(i, 3))
-			add_child(mi)
-			tile_nodes.append(mi)
-			tile_keys.append("unploughed:%d" % _variant(i, 3))
-			crop_nodes.append(null)
-			crop_keys.append("")
-
-	# Selection frame (one node, moved to the selected tile)
-	var cb := MeshBuilder.new()
-	var yellow := Color(1.0, 0.85, 0.2)
-	cb.add_box(Vector3(0, 0, -0.71), Vector3(1.46, 0.05, 0.08), yellow, 0.0, 1.0)
-	cb.add_box(Vector3(0, 0, 0.71), Vector3(1.46, 0.05, 0.08), yellow, 0.0, 1.0)
-	cb.add_box(Vector3(-0.71, 0, 0), Vector3(0.08, 0.05, 1.46), yellow, 0.0, 1.0)
-	cb.add_box(Vector3(0.71, 0, 0), Vector3(0.08, 0.05, 1.46), yellow, 0.0, 1.0)
-	cursor = MeshInstance3D.new()
-	cursor.mesh = cb.build()
-	cursor.material_override = MeshBuilder.vc_material(true)
-	cursor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	cursor.visible = false
-	add_child(cursor)
-
-func _tile_mesh(kind: String, variant: int) -> ArrayMesh:
-	var key := "t:%s:%d" % [kind, variant]
-	if not mesh_cache.has(key):
-		mesh_cache[key] = TileModels.build(kind, variant)
-	return mesh_cache[key]
-
-func _crop_mesh(crop_id: String, stage: int, variant: int) -> ArrayMesh:
-	var key := "c:%s:%d:%d:%d" % [crop_id, stage, variant, detail]
-	if not mesh_cache.has(key):
-		mesh_cache[key] = CropModels.build(crop_id, stage, variant, detail)
-	return mesh_cache[key]
-
-func _prebuild_crops() -> void:
-	for crop_id in CropData.CROPS:
-		for stage in 3:
-			for v in 2:
-				_crop_mesh(crop_id, stage, v)
-
-# Crop detail 0 (fewer plants and leaves) or 1 (full). Call refresh_tile for all tiles afterwards.
-func set_detail(d: int) -> void:
-	if d == detail:
+# Swaps dynamic surface elements based on stage and time metrics
+func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: bool) -> void:
+	if i < 0 or i >= tile_nodes.size():
 		return
-	detail = d
-	for i in crop_keys.size():
-		crop_keys[i] = ""
-	if tile_nodes.size() > 0:
-		_prebuild_crops()
+		
+	var mi: MeshInstance3D = tile_nodes[i]
+	var state: String = tile_data["state"]
+	var crop_id: String = tile_data["crop"]
+	
+	# Query the 4-stage tracking engine to isolate visual model configuration keys
+	var stage_idx := CropStages.get_stage_index(crop_id, progress)
+	var cache_key := "%s_%s_%d_%s" % [state, crop_id, stage_idx, "sel" if is_selected else "nor"]
+	
+	# Fetch pre-built instance geometries to protect frame rates
+	if mesh_cache.has(cache_key):
+		mi.mesh = mesh_cache[cache_key]
+		return
+		
+	# Fallback generator loop for uncached custom tiles
+	var combined_mesh := ArrayMesh.new()
+	var st_mesh := _generate_base_ground_mesh(state, is_selected)
+	
+	if st_mesh and st_mesh.get_surface_count() > 0:
+		combined_mesh.add_surface_from_arrays(
+			Mesh.PRIMITIVE_TRIANGLES, 
+			st_mesh.surface_get_arrays(0)
+		)
+		
+	if state == "growing" and crop_id != "":
+		var crop_mesh := CropModels.generate_crop_mesh(crop_id, stage_idx)
+		if crop_mesh and crop_mesh.get_surface_count() > 0:
+			var crop_arrays = crop_mesh.surface_get_arrays(0)
+			
+			# Multi-plant density distribution offsets inside a single draw call
+			var p_count: int = CropData.CROPS[crop_id]["visual"]["plants_per_tile"]
+			var verts: PackedVector3Array = crop_arrays[Mesh.ARRAY_VERTEX]
+			var shifted_verts := PackedVector3Array()
+			var shifted_indices := PackedInt32Array()
+			var combined_indices: PackedInt32Array = crop_arrays[Mesh.ARRAY_INDEX]
+			
+			for p in p_count:
+				var offset_idx := shifted_verts.size()
+				# Grid dispersal math coordinates inside the single 2.0 unit tile boundaries
+				var ox := -0.5 + (p % 2) * 1.0 + (randf() - 0.5) * 0.2
+				var oz := -0.5 + floorf(p / 2.0) * 1.0 + (randf() - 0.5) * 0.2
+				
+				for v_idx in verts.size():
+					shifted_verts.append(verts[v_idx] + Vector3(ox, 0.0, oz))
+					
+				for ind in combined_indices:
+					shifted_indices.append(ind + offset_idx)
+					
+			crop_arrays[Mesh.ARRAY_VERTEX] = shifted_verts
+			crop_arrays[Mesh.ARRAY_INDEX] = shifted_indices
+			combined_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, crop_arrays)
+			
+	mesh_cache[cache_key] = combined_mesh
+	mi.mesh = combined_mesh
 
-func set_blob_shadows(on: bool) -> void:
-	if scenery != null:
-		scenery.set_blob_visible(on)
-
-# Index = row * cols + col, same order as GameState.tiles.
-func world_to_tile(p: Vector3) -> int:
-	var lx := p.x - FIELD_CENTER.x + cols * PITCH / 2.0
-	var lz := p.z - FIELD_CENTER.z + rows * PITCH / 2.0
-	if lx < 0.0 or lz < 0.0:
-		return -1
-	var col := int(lx / PITCH)
-	var row := int(lz / PITCH)
-	if col >= cols or row >= rows:
-		return -1
-	return row * cols + col
-
-func refresh_tile(i: int, tile: Dictionary, progress: float, is_selected: bool) -> void:
-	var node: MeshInstance3D = tile_nodes[i]
-	var st: String = tile["state"]
-	var kind := "ploughed"
-	if st == "unploughed" or st == "stubble":
-		kind = st
-	var tkey := "%s:%d" % [kind, _variant(i, 3)]
-	if tile_keys[i] != tkey:
-		tile_keys[i] = tkey
-		node.mesh = _tile_mesh(kind, _variant(i, 3))
-
-	var crop = crop_nodes[i]
-	if st == "growing":
-		var crop_id: String = tile["crop"]
-		var stage := CropModels.stage_for(progress)
-		var cv := _variant(i, 2)
-		var key := "%s:%d:%d" % [crop_id, stage, detail]
-		if crop == null:
-			crop = MeshInstance3D.new()
-			crop.material_override = mat_vc
-			crop.position = Vector3(node.position.x, TileModels.BASE_Y, node.position.z)
-			crop.rotation.y = float(int(_h(i + 11) * 4.0)) * PI / 2.0
-			add_child(crop)
-			crop_nodes[i] = crop
-		if crop_keys[i] != key:
-			crop_keys[i] = key
-			crop.mesh = _crop_mesh(crop_id, stage, cv)
-		crop.visible = true
-	elif crop != null:
-		crop.visible = false
-		crop_keys[i] = ""
-
-	if is_selected:
-		cursor_index = i
-		cursor.position = Vector3(node.position.x, TileModels.BASE_Y + 0.16, node.position.z)
-		cursor.visible = true
-	elif cursor_index == i:
-		cursor_index = -1
-		cursor.visible = false
+func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var indices := PackedInt32Array()
+	var colors := PackedColorArray()
+	
+	var h := TILE_SIZE / 2.0
+	verts.append(Vector3(-h, 0.0, -h))
+	verts.append(Vector3(h, 0.0, -h))
+	verts.append(Vector3(h, 0.0, h))
+	verts.append(Vector3(-h, 0.0, h))
+	
+	indices.append_array([0, 1, 2, 0, 2, 3])
+	
+	var col := Color(0.22, 0.45, 0.15) # Default grass state
+	match state:
+		"ploughed":
+			col = Color(0.28, 0.20, 0.14) # Rich dark tilled soil
+		"growing":
+			col = Color(0.24, 0.18, 0.12) # Hydrated farming ground
+		"stubble":
+			col = Color(0.35, 0.30, 0.18) # Harvested field residue layer
+			
+	if selected:
+		col = col.lerp(Color(0.95, 0.85, 0.1), 0.35) # Smooth active cell highlight
+		
+	for i in 4:
+		colors.append(col)
+		
+	return preload("res://scripts/mesh_builder.gd").build_mesh(verts, indices, colors)
