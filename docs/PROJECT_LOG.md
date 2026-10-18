@@ -5,7 +5,8 @@
 - Phone-only workflow: GitHub repo + GitHub Actions builds the APK (arm64 + armeabi-v7a).
 - Test device: TECNO BF6 (Pop 7), PowerVR Rogue GE8322. Needs 32-bit ARM build.
 - Simulation data (tile dictionaries) kept separate from 3D nodes.
-- Look: flat-colour low-poly, one directional light + ambient colour, no shadows.
+- Look (CHANGED, see docs/VISUAL_PLAN.md): moving from flat-colour primitives to textured low-poly
+  (texture atlases, UV-mapped crop stages, sky, optional shadows). Offline gameplay stays the priority.
 - Scripts are loaded with preload(), not class_name, to avoid class-cache issues in CI.
 - Stage 1: landscape, 8x8 field.
 - Growth uses unix timestamps (planted_at) so offline progress can be computed on load.
@@ -24,8 +25,6 @@
 - Stage 0 (toolchain proof): DONE and tested on device. ~60 FPS, ~21 MB, orbit + pinch zoom work.
 - Stage 1 (farm grid, tap-to-select): built and run on device. Confirmed from screenshots:
   launches, farm renders, tile tap highlights tile and updates panel, ~60 FPS, ~20 MB.
-  NOT yet confirmed: drag/pinch never selects a tile, tapping outside the field clears
-  the selection, pinch zoom limits.
   Files: scenes/main.tscn, scripts/farm_main.gd, farm_grid.gd, camera_rig.gd, hud.gd.
   Verified on device: drag/pinch do not select, outside tap clears selection, zoom works.
 - Milestone 2 Step A (plough, plant maize/beans, grow, harvest, money, stock, sell): verified
@@ -73,6 +72,11 @@
   New files: mesh_builder.gd, tile_models.gd, farm_scenery.gd. Rewritten: crop_models.gd,
   farm_grid.gd, tractor_view.gd, farm_main.gd. Real photoreal crops would need textured .glb
   assets (e.g. free CC0 packs) uploaded to the repo.
+
+- Visual direction reset (planning, no code yet): goal is realistic, textured, multi-stage crops
+  and a deeper environment, close to the look of commercial mobile farming games, within mobile
+  budgets. Plan, budgets and phases V1-V4 are in docs/VISUAL_PLAN.md. The last build (visual
+  overhaul) is still vertex-colour only and has not been reported on yet.
 
 ## Known issues
 - FPS: mostly 54-61 on the TECNO BF6, but dips seen at 44 (harvesting) and 36 (manage view,
