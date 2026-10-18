@@ -11,6 +11,8 @@ const VehicleModel := preload("res://scripts/vehicle_model.gd")
 const FarmLayout := preload("res://scripts/farm_layout.gd")
 const FarmGridScript := preload("res://scripts/farm_grid.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
+const SettingsScript := preload("res://scripts/settings.gd")
+const CropModels := preload("res://scripts/crop_models.gd")
 
 var failures := 0
 
@@ -432,6 +434,48 @@ func _init() -> void:
 	est_ap.start(est_state.tractor, est_state.jobs_for("plough", t0), float(cfg["work_offset"]))
 	var est: float = est_ap.estimate_fuel(est_state.tractor, cfg)
 	_check(est > 8.0 and est < 14.0, "fuel estimate for a full field is realistic (" + str(est) + ")")
+
+	# --- Settings ---
+	var sp := "user://test_settings.json"
+	if FileAccess.file_exists(sp):
+		DirAccess.remove_absolute(sp)
+	_check(SettingsScript.load_settings(sp)["quality"] == 0, "missing settings file gives defaults")
+	_check(SettingsScript.save_settings({"quality": 2, "debug": false}, sp), "settings save")
+	var sl: Dictionary = SettingsScript.load_settings(sp)
+	_check(sl["quality"] == 2 and sl["debug"] == false, "settings round trip")
+	var sbad: Dictionary = SettingsScript.sanitize({"quality": 9, "debug": "yes"})
+	_check(sbad["quality"] == 0 and sbad["debug"] == true, "bad settings fall back to defaults")
+	var snull: Dictionary = SettingsScript.sanitize(null)
+	_check(snull["quality"] == 0 and snull["debug"] == true, "null settings give defaults")
+	if FileAccess.file_exists(sp):
+		DirAccess.remove_absolute(sp)
+
+	# --- Money safety net ---
+	var rl = GameState.new()
+	rl.money = 5
+	_check(rl.relief_grant() == 100 and rl.money == 105, "broke player gets a farm grant")
+	_check(rl.relief_grant() == 0, "no second grant once there is money")
+	var rl2 = GameState.new()
+	rl2.money = 5
+	rl2.inventory["maize"] = 4
+	_check(rl2.relief_grant() == 0, "no grant while there is stock to sell")
+	var rl3 = GameState.new()
+	rl3.plough(0)
+	rl3.plant(0, "beans", t0)
+	rl3.money = 0
+	_check(rl3.relief_grant() == 0, "no grant while a crop is growing")
+	var rl4 = GameState.new()
+	rl4.money = 12
+	_check(rl4.relief_grant() == 0, "enough money for the cheapest seed means no grant")
+
+	# --- Crop models ---
+	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.5) == 1 and CropModels.stage_for(1.0) == 2, "crop stages by progress")
+	for cid in ["maize", "beans", "other"]:
+		for stg in 3:
+			var cm = CropModels.build(cid, stg)
+			var carr = cm.surface_get_arrays(0)
+			var nv: int = carr[Mesh.ARRAY_VERTEX].size()
+			_check(cm.get_surface_count() == 1 and nv > 0 and carr[Mesh.ARRAY_COLOR].size() == nv, "crop model %s stage %d builds (%d vertices)" % [cid, stg, nv])
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)
