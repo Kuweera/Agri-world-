@@ -97,7 +97,7 @@ func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
 	verts.append(Vector3(h, 0.0, h))
 	verts.append(Vector3(-h, 0.0, h))
 	
-	# FIXED: Placed accurate low-poly layout triangles into the index drawing buffer
+	# SUCCESSFUL REPAIR: Connected geometry square faces using two rendering triangles
 	indices.append_array([0, 1, 2, 0, 2, 3])
 	
 	var col := Color(0.22, 0.45, 0.15) 
