@@ -13,6 +13,9 @@ const FarmGridScript := preload("res://scripts/farm_grid.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
+const TileModels := preload("res://scripts/tile_models.gd")
+const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
+const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 
 var failures := 0
 
@@ -96,7 +99,7 @@ func _init() -> void:
 	_check(s.is_ripe(0, t0 + 40.0), "ripe at 40s")
 	_check(s.harvest(0, t0 + 40.0) == "", "harvest ripe maize")
 	_check(int(s.inventory.get("maize", 0)) == 4, "harvest gives 4 maize")
-	_check(s.tiles[0]["state"] == "ploughed", "tile returns to ploughed")
+	_check(s.tiles[0]["state"] == "stubble", "harvested tile is left as stubble")
 	_check(s.harvest(0, t0 + 41.0) != "", "cannot harvest twice")
 	_check(int(s.inventory.get("maize", 0)) == 4, "double harvest adds nothing")
 
@@ -358,8 +361,8 @@ func _init() -> void:
 	res = _auto_job(job, "harvester", t0 + 1000.0)
 	_check(res["started"] and res["finished"], "autopilot finishes harvesting")
 	_check(int(job.inventory.get("beans", 0)) == 64 * 3, "autopilot harvests all 64 tiles")
-	_check(_count_state(job, "ploughed") == 64, "harvested tiles return to ploughed")
-	_check(job.rows_with_work("plough", t0 + 1000.0).is_empty(), "nothing left to plough")
+	_check(_count_state(job, "stubble") == 64, "harvested tiles are left as stubble")
+	_check(job.rows_with_work("plough", t0 + 1000.0).size() == 8, "stubble must be ploughed again")
 	_check(not AutoPilotScript.new().start(job.tractor, [], 1.8), "autopilot refuses an empty job")
 
 	# Partial job: only some rows need work
@@ -468,14 +471,63 @@ func _init() -> void:
 	rl4.money = 12
 	_check(rl4.relief_grant() == 0, "enough money for the cheapest seed means no grant")
 
-	# --- Crop models ---
+	# --- Stubble ---
+	var sb = GameState.new()
+	sb.plough(0)
+	sb.plant(0, "beans", t0)
+	_check(sb.harvest(0, t0 + 30.0) == "", "harvest beans for the stubble test")
+	_check(sb.tiles[0]["state"] == "stubble", "harvest leaves stubble")
+	_check(sb.plant(0, "beans", t0 + 40.0) == "Plough the tile first", "cannot plant on stubble")
+	_check(sb.apply_implement("seeder", 0, "beans", t0) == "skip", "seeder skips stubble")
+	_check(sb.can_work("plough", 0, t0), "stubble needs ploughing")
+	_check(sb.plough(0) == "" and sb.tiles[0]["state"] == "ploughed", "stubble can be ploughed again")
+	sb.tiles[1]["state"] = "stubble"
+	var sbd: Dictionary = sb.to_dict()
+	var sb2 = GameState.new()
+	_check(sb2.from_dict(sbd) == "" and sb2.tiles[1]["state"] == "stubble", "stubble survives save and load")
+
+	# --- Mesh builder, tiles, crops, scenery: finite, bounded and within triangle budgets ---
 	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.5) == 1 and CropModels.stage_for(1.0) == 2, "crop stages by progress")
+	for kind in ["unploughed", "ploughed", "stubble"]:
+		for tv in 3:
+			var tm: ArrayMesh = TileModels.build(kind, tv)
+			var tarr = tm.surface_get_arrays(0)
+			var tn: int = tarr[Mesh.ARRAY_VERTEX].size()
+			var tb: AABB = tm.get_aabb()
+			_check(tn > 0 and tn % 3 == 0 and tn / 3 < 500, "tile %s v%d builds (%d triangles)" % [kind, tv, tn / 3])
+			_check(tb.size.is_finite() and tb.size.x < 1.6 and tb.size.z < 1.6 and tb.size.y < 0.4, "tile %s v%d stays inside its cell" % [kind, tv])
 	for cid in ["maize", "beans", "other"]:
 		for stg in 3:
-			var cm = CropModels.build(cid, stg)
-			var carr = cm.surface_get_arrays(0)
-			var nv: int = carr[Mesh.ARRAY_VERTEX].size()
-			_check(cm.get_surface_count() == 1 and nv > 0 and carr[Mesh.ARRAY_COLOR].size() == nv, "crop model %s stage %d builds (%d vertices)" % [cid, stg, nv])
+			for det in 2:
+				var cm: ArrayMesh = CropModels.build(cid, stg, 0, det)
+				var carr = cm.surface_get_arrays(0)
+				var nv: int = carr[Mesh.ARRAY_VERTEX].size()
+				var cb: AABB = cm.get_aabb()
+				var budget := 450 if det == 0 else 900
+				_check(nv > 0 and nv % 3 == 0 and carr[Mesh.ARRAY_COLOR].size() == nv and carr[Mesh.ARRAY_NORMAL].size() == nv, "crop %s stage %d detail %d builds (%d triangles)" % [cid, stg, det, nv / 3])
+				_check(nv / 3 <= budget, "crop %s stage %d detail %d within triangle budget" % [cid, stg, det])
+				_check(cb.size.is_finite() and cb.size.x < 2.0 and cb.size.z < 2.0 and cb.size.y < 1.8, "crop %s stage %d detail %d has sane size" % [cid, stg, det])
+	var maize_ripe: ArrayMesh = CropModels.build("maize", 2, 0, 1)
+	var maize_young: ArrayMesh = CropModels.build("maize", 1, 0, 1)
+	_check(maize_ripe.get_aabb().size.y > maize_young.get_aabb().size.y, "ripe maize is taller than growing maize")
+
+	var holder := Node3D.new()
+	var scen = FarmSceneryScript.new()
+	scen.build(holder, MeshBuilder.vc_material())
+	var scen_tris := 0
+	var scen_ok := true
+	for ch in holder.get_children():
+		var mi := ch as MeshInstance3D
+		if mi == null or mi.mesh == null or mi.mesh.get_surface_count() == 0:
+			scen_ok = false
+			continue
+		var sa = mi.mesh.surface_get_arrays(0)
+		scen_tris += sa[Mesh.ARRAY_VERTEX].size() / 3
+		if not mi.mesh.get_aabb().size.is_finite():
+			scen_ok = false
+	_check(scen_ok and holder.get_child_count() == 6, "scenery builds 6 finite meshes")
+	_check(scen_tris < 20000, "scenery triangle budget (%d)" % scen_tris)
+	holder.free()
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)
