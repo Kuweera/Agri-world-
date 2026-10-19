@@ -1,6 +1,8 @@
 extends RefCounted
 # Crop catalogue. All numbers live here so they are easy to change.
 # grow_seconds is short on purpose for testing.
+# visual.stages: each stage starts at progress "from" (0.0 to 1.0).
+# The thresholds match crop_models.gd stage_for (0.34 and 1.0).
 
 const CROPS := {
 	"maize": {
@@ -10,6 +12,14 @@ const CROPS := {
 		"yield": 4,
 		"sell_price": 15,
 		"color": Color(0.95, 0.85, 0.2),
+		"visual": {
+			"archetype": "cereal",
+			"stages": [
+				{"name": "sprout", "from": 0.0},
+				{"name": "growing", "from": 0.34},
+				{"name": "ripe", "from": 1.0},
+			],
+		},
 	},
 	"beans": {
 		"name": "Beans",
@@ -18,5 +28,13 @@ const CROPS := {
 		"yield": 3,
 		"sell_price": 14,
 		"color": Color(0.55, 0.3, 0.15),
+		"visual": {
+			"archetype": "legume_bush",
+			"stages": [
+				{"name": "sprout", "from": 0.0},
+				{"name": "growing", "from": 0.34},
+				{"name": "ripe", "from": 1.0},
+			],
+		},
 	},
 }
