@@ -12,6 +12,7 @@ var tile_nodes: Array = []
 var mesh_cache: Dictionary = {}
 
 func _ready() -> void:
+	print("[DEBUG 2.1] Starting farm_grid _ready generation loop")
 	tile_nodes.clear()
 	
 	for row in ROWS:
@@ -24,11 +25,11 @@ func _ready() -> void:
 			)
 			add_child(tm)
 			tile_nodes.append(tm)
+	print("[DEBUG 2.2] Generated %d layout tile grid nodes" % tile_nodes.size())
 
 func world_to_tile(world_pos: Vector3) -> int:
 	var cx := floori((world_pos.x + (COLS * TILE_SIZE) / 2.0) / TILE_SIZE)
 	var cz := floori((world_pos.z + (ROWS * TILE_SIZE) / 2.0) / TILE_SIZE)
-	
 	if cx < 0 or cx >= COLS or cz < 0 or cz >= ROWS:
 		return -1
 	return cz * COLS + cx
@@ -61,7 +62,6 @@ func refresh_tile(i: int, tile_data: Dictionary, progress: float, is_selected: b
 		var crop_mesh := CropModels.generate_crop_mesh(crop_id, stage_idx)
 		if crop_mesh and crop_mesh.get_surface_count() > 0:
 			var crop_arrays = crop_mesh.surface_get_arrays(0)
-			
 			var p_count: int = CropData.CROPS[crop_id]["visual"]["plants_per_tile"]
 			var verts: PackedVector3Array = crop_arrays[Mesh.ARRAY_VERTEX]
 			var shifted_verts := PackedVector3Array()
@@ -97,7 +97,7 @@ func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
 	verts.append(Vector3(h, 0.0, h))
 	verts.append(Vector3(-h, 0.0, h))
 	
-	# SUCCESSFUL REPAIR: Connected geometry square faces using two rendering triangles
+	# Explicitly map the face index mapping layout arrays to avoid GPU hanging
 	indices.append_array([0, 1, 2, 0, 2, 3])
 	
 	var col := Color(0.22, 0.45, 0.15) 
