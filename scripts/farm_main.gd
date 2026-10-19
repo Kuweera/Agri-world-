@@ -12,13 +12,12 @@ const VehicleModel := preload("res://scripts/vehicle_model.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
+const EnvironmentSetupScript := preload("res://scripts/environment_setup.gd")
 
 const QUALITY_NAMES := ["Low", "Medium", "High"]
 const DRIVE_SAVE_INTERVAL := 8.0   # seconds; saving more often can cause hitches on slow storage
 
-var sun: DirectionalLight3D
-var env: Environment
-var sky_obj: Sky
+var env_setup
 var rig
 var grid
 var hud
@@ -45,29 +44,8 @@ var cam_resetting := false
 func _ready() -> void:
 	settings = SettingsScript.load_settings()
 
-	sun = DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, -35, 0)
-	sun.light_color = Color(1.0, 0.96, 0.88)
-	sun.light_energy = 1.1
-	add_child(sun)
-
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.22, 0.48, 0.85)
-	sky_mat.sky_horizon_color = Color(0.72, 0.84, 0.95)
-	sky_mat.ground_horizon_color = Color(0.72, 0.84, 0.95)
-	sky_mat.ground_bottom_color = Color(0.3, 0.4, 0.25)
-	sky_obj = Sky.new()
-	sky_obj.sky_material = sky_mat
-	sky_obj.radiance_size = Sky.RADIANCE_SIZE_32
-
-	var we := WorldEnvironment.new()
-	env = Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.53, 0.75, 0.95)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.5, 0.54, 0.62)
-	we.environment = env
-	add_child(we)
+	env_setup = EnvironmentSetupScript.new()
+	add_child(env_setup)
 
 	cfg = VehicleData.VEHICLES["tractor"]
 	autopilot = AutoPilotScript.new()
@@ -112,16 +90,7 @@ func _ready() -> void:
 # Low: flat sky colour, no shadows, lighter crops, blob shadows (safest for weak phones).
 # Medium/High: procedural sky, real sun shadows, full crop detail.
 func _apply_quality(q: int) -> void:
-	sun.shadow_enabled = q > 0
-	if q > 0:
-		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-		sun.directional_shadow_max_distance = 30.0 if q == 1 else 45.0
-		sun.shadow_bias = 0.08
-		RenderingServer.directional_shadow_atlas_set_size(1024 if q == 1 else 2048, true)
-		env.background_mode = Environment.BG_SKY
-		env.sky = sky_obj
-	else:
-		env.background_mode = Environment.BG_COLOR
+	env_setup.apply_quality(q)
 	grid.set_detail(0 if q == 0 else 1)
 	grid.set_blob_shadows(q == 0)
 	tractor_view.set_blob_visible(q == 0)
