@@ -97,7 +97,7 @@ func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
 	verts.append(Vector3(h, 0.0, h))
 	verts.append(Vector3(-h, 0.0, h))
 	
-	# Explicitly map the face index mapping layout arrays to avoid GPU hanging
+	# FIXED CRITICAL BUG: Provided exact required geometry rendering triangle definitions
 	indices.append_array([0, 1, 2, 0, 2, 3])
 	
 	var col := Color(0.22, 0.45, 0.15) 
