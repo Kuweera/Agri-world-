@@ -15,6 +15,7 @@ const SettingsScript := preload("res://scripts/settings.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
 const TileModels := preload("res://scripts/tile_models.gd")
 const CropStages := preload("res://scripts/crop_stages.gd")
+const EnvironmentSetup := preload("res://scripts/environment_setup.gd")
 const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 
@@ -512,6 +513,20 @@ func _init() -> void:
 	_check(CropStages.get_stage_name("beans", 0.5) == "growing", "beans stage name")
 	_check(CropStages.get_stage_index("other", 1.0) == 2, "unknown crop uses defaults")
 	_check(CropStages.get_stage_name("other", 0.0) == "sprout", "unknown crop stage name")
+
+	# --- Graphics quality profiles (sun shadows, sky) ---
+	var ev_p0: Dictionary = EnvironmentSetup.profile(0)
+	var ev_p1: Dictionary = EnvironmentSetup.profile(1)
+	var ev_p2: Dictionary = EnvironmentSetup.profile(2)
+	_check(EnvironmentSetup.PROFILES.size() == 3, "3 graphics quality profiles")
+	_check(ev_p0["name"] == "Low" and ev_p1["name"] == "Medium", "quality profile names")
+	_check(ev_p2["name"] == "High", "high quality profile name")
+	_check(not ev_p0["shadows"] and not ev_p0["sky"], "Low has no sun shadows and a flat sky")
+	_check(ev_p1["shadows"] and ev_p2["shadows"], "Medium and High have sun shadows")
+	_check(float(ev_p2["shadow_distance"]) > float(ev_p1["shadow_distance"]), "High shadow distance")
+	_check(int(ev_p2["atlas"]) > int(ev_p1["atlas"]), "High shadow atlas is bigger")
+	_check(EnvironmentSetup.profile(-5)["name"] == "Low", "quality below 0 gives Low")
+	_check(EnvironmentSetup.profile(99)["name"] == "High", "quality above 2 gives High")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
