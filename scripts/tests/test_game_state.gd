@@ -491,20 +491,20 @@ func _init() -> void:
 	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.5) == 1 and CropModels.stage_for(1.0) == 2, "crop stages by progress")
 
 	# --- Crop stages come from crop_data.gd and agree with the 3D models ---
-	for sid in CropData.CROPS:
-		var sl: Array = CropStages.stages_for(sid)
-		var sl_ok: bool = sl.size() == 3 and absf(float(sl[0]["from"])) < 0.0001
-		sl_ok = sl_ok and absf(float(sl[sl.size() - 1]["from"]) - 1.0) < 0.0001
-		for si in range(1, sl.size()):
-			if float(sl[si]["from"]) <= float(sl[si - 1]["from"]):
-				sl_ok = false
-		_check(sl_ok, "crop %s has 3 ordered stages from 0.0 to 1.0" % sid)
-		var agree := true
-		for pi in 101:
-			var pr := float(pi) / 100.0
-			if CropStages.get_stage_index(sid, pr) != CropModels.stage_for(pr):
-				agree = false
-		_check(agree, "crop %s stages match the 3D models" % sid)
+	for cs_id in CropData.CROPS:
+		var cs_list: Array = CropStages.stages_for(cs_id)
+		var cs_ok: bool = cs_list.size() == 3 and absf(float(cs_list[0]["from"])) < 0.0001
+		cs_ok = cs_ok and absf(float(cs_list[cs_list.size() - 1]["from"]) - 1.0) < 0.0001
+		for cs_i in range(1, cs_list.size()):
+			if float(cs_list[cs_i]["from"]) <= float(cs_list[cs_i - 1]["from"]):
+				cs_ok = false
+		_check(cs_ok, "crop %s has 3 ordered stages from 0.0 to 1.0" % cs_id)
+		var cs_agree := true
+		for cs_p in 101:
+			var cs_prog := float(cs_p) / 100.0
+			if CropStages.get_stage_index(cs_id, cs_prog) != CropModels.stage_for(cs_prog):
+				cs_agree = false
+		_check(cs_agree, "crop %s stages match the 3D models" % cs_id)
 	_check(CropStages.get_stage_index("maize", 0.33) == 0, "maize stage at 33%")
 	_check(CropStages.get_stage_index("maize", 0.34) == 1, "maize stage at 34%")
 	_check(CropStages.get_stage_index("maize", 0.99) == 1, "maize stage at 99%")
