@@ -14,6 +14,7 @@ const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
 const TileModels := preload("res://scripts/tile_models.gd")
+const CropStages := preload("res://scripts/crop_stages.gd")
 const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 
@@ -488,6 +489,29 @@ func _init() -> void:
 
 	# --- Mesh builder, tiles, crops, scenery: finite, bounded and within triangle budgets ---
 	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.5) == 1 and CropModels.stage_for(1.0) == 2, "crop stages by progress")
+
+	# --- Crop stages come from crop_data.gd and agree with the 3D models ---
+	for sid in CropData.CROPS:
+		var sl: Array = CropStages.stages_for(sid)
+		var sl_ok: bool = sl.size() == 3 and absf(float(sl[0]["from"])) < 0.0001
+		sl_ok = sl_ok and absf(float(sl[sl.size() - 1]["from"]) - 1.0) < 0.0001
+		for si in range(1, sl.size()):
+			if float(sl[si]["from"]) <= float(sl[si - 1]["from"]):
+				sl_ok = false
+		_check(sl_ok, "crop %s has 3 ordered stages from 0.0 to 1.0" % sid)
+		var agree := true
+		for pi in 101:
+			var pr := float(pi) / 100.0
+			if CropStages.get_stage_index(sid, pr) != CropModels.stage_for(pr):
+				agree = false
+		_check(agree, "crop %s stages match the 3D models" % sid)
+	_check(CropStages.get_stage_index("maize", 0.33) == 0, "maize stage at 33%")
+	_check(CropStages.get_stage_index("maize", 0.34) == 1, "maize stage at 34%")
+	_check(CropStages.get_stage_index("maize", 0.99) == 1, "maize stage at 99%")
+	_check(CropStages.get_stage_index("maize", 1.0) == 2, "maize stage at 100%")
+	_check(CropStages.get_stage_name("beans", 0.5) == "growing", "beans stage name")
+	_check(CropStages.get_stage_index("other", 1.0) == 2, "unknown crop uses defaults")
+	_check(CropStages.get_stage_name("other", 0.0) == "sprout", "unknown crop stage name")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
