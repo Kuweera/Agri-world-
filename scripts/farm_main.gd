@@ -29,28 +29,35 @@ var save_timer := 0.0
 var empty_warned := false
 
 func _ready() -> void:
-	# Instantiate our new dynamic environment and lighting tier setup
+	print("1. Starting _ready master initialization block")
+	
 	env_setup = EnvironmentSetupScript.new()
 	add_child(env_setup)
-	env_setup.apply_quality_profile("low") # Baseline optimization for the PowerVR GPU
+	env_setup.apply_quality_profile("low")
+	print("2. Environment controller node attached")
 
 	cfg = VehicleData.VEHICLES["tractor"]
 	state = GameStateScript.new()
 	var load_result: String = SaveManager.load_into(state)
+	print("3. Simulation data state matrices loaded")
 
 	grid = FarmGridScript.new()
 	add_child(grid)
+	print("4. Grid built and added to viewport scene tree")
 
 	tractor_view = TractorViewScript.new()
 	add_child(tractor_view)
 	tractor_view.update_from(state.tractor)
+	print("5. Vehicle model view mesh layers populated")
 
 	rig = CameraRigScript.new()
 	rig.position = Vector3(0, 0, -1)
 	add_child(rig)
+	print("6. Camera Rig attached to tree loop")
 
 	hud = HudScript.new()
 	add_child(hud)
+	print("7. Interface overlay HUD active")
 
 	rig.tapped.connect(_on_tapped)
 	hud.action_pressed.connect(_on_action)
@@ -59,6 +66,7 @@ func _ready() -> void:
 		_refresh_tile(i)
 	_update_drive_texts()
 	_update_ui()
+	print("8. Finished _ready - everything generated successfully!")
 
 	if load_result == "":
 		var ripe := _count_ripe()
