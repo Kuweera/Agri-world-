@@ -1,169 +1,144 @@
-# AgriWorld 3D — Project Log
+extends RefCounted
+# Low-poly plant models, built from tapered stalks and curved leaf ribbons.
+# One mesh per field tile (one draw call). Stage 0 = seedling, 1 = growing, 2 = ripe.
+# detail 0 = fewer plants and leaves (for weak phones), detail 1 = full.
 
-## Decisions
-- Engine: Godot 4.3, GL Compatibility renderer, GDScript.
-- Phone-only workflow: GitHub repo + GitHub Actions builds the APK (arm64 + armeabi-v7a).
-- Test device: TECNO BF6 (Pop 7), PowerVR Rogue GE8322. Needs 32-bit ARM build.
-- Simulation data (tile dictionaries) kept separate from 3D nodes.
-- Look (CHANGED, see docs/VISUAL_PLAN.md): moving from flat-colour primitives to textured low-poly
-  (texture atlases, UV-mapped crop stages, sky, optional shadows). Offline gameplay stays the priority.
-- Scripts are loaded with preload(), not class_name, to avoid class-cache issues in CI.
-- Stage 1: landscape, 8x8 field.
-- Growth uses unix timestamps (planted_at) so offline progress can be computed on load.
-- Game logic (scripts/game_state.gd) has no nodes; time is passed in, so it can be tested headless.
-- Crop numbers live in scripts/crop_data.gd (growth times are short for testing).
-- Touch: emulate_mouse_from_touch=true so Buttons receive touches (was false in Stage 0/1).
-- Vehicles: pure model (vehicle_model.gd) + config (vehicle_data.gd); tractor state lives in
-  GameState.tractor. Driving controls are two touch strips handled in _input() by touch index,
-  because Buttons only see one touch at a time.
-- Save: versioned JSON at user://save.json (schema_version 2; v1 saves are migrated, adding a default tractor), temp file + .bak backup,
-  validated before applying, autosave after each action and when the app pauses/closes.
-- Offline growth comes from stored unix timestamps. Changing the phone clock affects the
-  OFFLINE game only; online play will use server time.
+const MeshBuilder := preload("res://scripts/mesh_builder.gd")
+const CropData := preload("res://scripts/crop_data.gd")
 
-## Status
-- Stage 0 (toolchain proof): DONE and tested on device. ~60 FPS, ~21 MB, orbit + pinch zoom work.
-- Stage 1 (farm grid, tap-to-select): built and run on device. Confirmed from screenshots:
-  launches, farm renders, tile tap highlights tile and updates panel, ~60 FPS, ~20 MB.
-  Files: scenes/main.tscn, scripts/farm_main.gd, farm_grid.gd, camera_rig.gd, hud.gd.
-  Verified on device: drag/pinch do not select, outside tap clears selection, zoom works.
-- Milestone 2 Step A (plough, plant maize/beans, grow, harvest, money, stock, sell): verified
-  on device from screenshots (money 468 after planting both crops, 570 after selling 4 maize +
-  3 beans, matching the logic tests; buttons respond).
-- Milestone 2 Step B (save/load, offline growth, Reset button): files written, results from
-  device not yet reported to me.
-  Files: scripts/save_manager.gd, game_state.gd (to_dict/from_dict), farm_main.gd, hud.gd,
-  tests in scripts/tests/test_game_state.gd. Check CI 'Run logic tests' shows 0 failures.
+static func stage_for(progress: float) -> int:
+	if progress >= 1.0:
+		return 2
+	if progress >= 0.34:
+		return 1
+	return 0
 
-- Milestone 3 Step A (tractor): verified on device from screenshots: drive mode, steering/gas
-  strips, tool cycling with visible implements, seeding, harvesting, fuel and run time, ~58-61 FPS.
-  (Original note: )
-  Manual driving (arcade physics, not VehicleBody3D), follow camera, tools (plough, seeder,
-  harvester) that work the tile BEHIND the tractor, fuel + refuel, running hours, save v2.
-  Files: scripts/vehicle_data.gd, vehicle_model.gd, tractor_view.gd, drive_controls.gd,
-  plus changes to game_state.gd, camera_rig.gd, hud.gd, farm_main.gd.
-- Milestone 3 Step B (autopilot): VERIFIED on device from screenshots. Full-field runs worked
-  (stock 256 maize + 192 beans = 64 tiles each), low-money warning shown, seeding stops at 0
-  money. Milestone 3 is complete. Logic tests still need confirming (file path fix).
-  (Original note: ) The Auto button
-  (drive view) works the whole field with the chosen tool: plans lanes along rows, drives them,
-  pivots between lanes. Stops on: finished, out of fuel, blocked, not enough money, tool
-  changed, or any touch on the steering/gas strips.
-  Reported on device: did not finish whole jobs and re-drove finished rows. Likely causes:
-  fuel/money ran out, crops not yet ripe, and always starting from row 0. Fixed: lanes now cover
-  only the columns that need work, start from the end nearest the tractor, up to 3 passes
-  (re-detects work), fuel/money warning at start, summary message with the reason it stopped. The headless tests simulate full
-  ploughing, seeding and harvesting jobs. Files: scripts/autopilot.gd, farm_layout.gd.
+static func _h(sd: int) -> float:
+	return fposmod(sin(float(sd) * 12.9898 + 78.233) * 43758.5453, 1.0)
 
-- Polish pass (written, NOT yet tested on device): FPS readout (current, 5 s average, 5 s low),
-  Menu with graphics quality Low/Medium/High (Medium/High enable sun shadows; Low is default),
-  debug readout on/off, Reset moved into Menu, outlined HUD text, drive strips dimmed during
-  Auto, merged low-poly crop models (one draw call per tile, 3 growth stages), money safety net
-  (100 grant when broke with no stock and nothing growing), drive autosave every 8 s (was 2 s,
-  possible cause of FPS hitches), drive camera raised. Files: settings.gd, crop_models.gd,
-  farm_grid.gd, hud.gd, farm_main.gd, game_state.gd.
+static func _spots(detail: int) -> Array:
+	if detail == 0:
+		return [Vector2(-0.36, -0.3), Vector2(0.36, -0.3), Vector2(0.0, 0.38)]
+	return [Vector2(-0.36, -0.36), Vector2(0.36, -0.36), Vector2(-0.36, 0.36), Vector2(0.36, 0.36)]
 
-- Visual overhaul (written, NOT yet tested on device): continuous ploughed/raw/stubble ground
-  (no gaps), furrows, grass tufts, realistic stylised maize and bean plants (3 growth stages,
-  crop detail 0/1), terrain with colour variation and distant hills, fence, trees, detailed
-  farmhouse, blob shadows when shadows are off, procedural sky on Medium/High, detailed tractor
-  with spinning lugged wheels, free orbit camera while driving (Camera: behind button), harvest
-  leaves stubble that must be ploughed again (HARVEST_LEAVES_STUBBLE in game_state.gd).
-  New files: mesh_builder.gd, tile_models.gd, farm_scenery.gd. Rewritten: crop_models.gd,
-  farm_grid.gd, tractor_view.gd, farm_main.gd. Real photoreal crops would need textured .glb
-  assets (e.g. free CC0 packs) uploaded to the repo.
+static func build(crop_id: String, stage: int, variant: int = 0, detail: int = 1) -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var spots := _spots(detail)
+	for i in spots.size():
+		var sp: Vector2 = spots[i]
+		var sd := variant * 97 + i * 13 + 5
+		var base := Vector3(sp.x + (_h(sd) - 0.5) * 0.16, 0.0, sp.y + (_h(sd + 1) - 0.5) * 0.16)
+		if crop_id == "maize":
+			_maize_plant(mb, base, stage, sd, detail)
+		elif crop_id == "beans":
+			_bean_plant(mb, base, stage, sd, detail)
+		else:
+			var h := 0.2 + 0.3 * float(stage)
+			var col := Color(0.3, 0.7, 0.25)
+			if stage == 2 and CropData.CROPS.has(crop_id):
+				col = CropData.CROPS[crop_id]["color"]
+			mb.add_box(base + Vector3(0, h / 2.0, 0), Vector3(0.4, h, 0.4), col)
+	return mb.build()
 
-- Visual direction reset (planning, no code yet): goal is realistic, textured, multi-stage crops
-  and a deeper environment, close to the look of commercial mobile farming games, within mobile
-  budgets. Plan, budgets and phases V1-V4 are in docs/VISUAL_PLAN.md. The last build (visual
-  overhaul) is still vertex-colour only and has not been reported on yet.
+static func _maize_plant(mb, base: Vector3, stage: int, sd: int, detail: int) -> void:
+	var up := Vector3.UP
+	if stage == 0:
+		for k in 3:
+			var a := float(k) * 2.1 + _h(sd + k) * 1.5
+			var out := Vector3(cos(a), 0.0, sin(a))
+			mb.add_ribbon([base, base + out * 0.04 + up * 0.13, base + out * 0.11 + up * 0.24],
+				[0.035, 0.03, 0.004], out.cross(up).normalized(), Color(0.3, 0.6, 0.2), Color(0.55, 0.85, 0.35))
+		return
+	var ripe := stage == 2
+	var h := 0.95 + 0.12 * _h(sd + 3)
+	if ripe:
+		h = 1.25 + 0.15 * _h(sd + 3)
+	var stalk0 := Color(0.3, 0.5, 0.15) if not ripe else Color(0.55, 0.45, 0.2)
+	var stalk1 := Color(0.5, 0.75, 0.3) if not ripe else Color(0.8, 0.7, 0.38)
+	mb.add_prism(base, base + up * h, 0.04, 0.022, 5, stalk0, stalk1)
+	var n := 4 if detail == 0 else 6
+	if ripe:
+		n += 1
+	for k in n:
+		var t := 0.2 + 0.62 * float(k) / float(n - 1)
+		var a := float(k) * PI + 0.5 + _h(sd + 10 + k) * 0.8
+		var dir := Vector3(cos(a), 0.0, sin(a))
+		var side := dir.cross(up).normalized()
+		var length := 0.38 + 0.18 * (1.0 - absf(t - 0.5))
+		var droop := 0.55 if not ripe else 0.85
+		var origin := base + up * (h * t)
+		var pts := []
+		for s in 5:
+			var u := float(s) / 4.0
+			pts.append(origin + dir * (length * u) + up * (sin(u * 1.7) * length * 0.35 - u * u * length * droop * 0.5))
+		var lc0 := Color(0.2, 0.42, 0.1) if not ripe else Color(0.5, 0.42, 0.2)
+		var lc1 := Color(0.4, 0.72, 0.22) if not ripe else Color(0.78, 0.68, 0.32)
+		mb.add_ribbon(pts, [0.03, 0.075, 0.085, 0.06, 0.01], side, lc0, lc1)
+	if ripe:
+		var ea := _h(sd + 40) * TAU
+		var edir := Vector3(cos(ea), 0.0, sin(ea))
+		var eb := base + up * (h * 0.55) + edir * 0.045
+		var emid := eb + edir * 0.05 + up * 0.14
+		var etip := emid + edir * 0.03 + up * 0.1
+		mb.add_prism(eb, emid, 0.04, 0.06, 6, Color(0.55, 0.5, 0.25), Color(0.75, 0.7, 0.38))
+		mb.add_prism(emid, etip, 0.06, 0.03, 6, Color(0.95, 0.78, 0.12), Color(0.98, 0.86, 0.25), true)
+		mb.add_ribbon([etip, etip + up * 0.05 + edir * 0.03, etip + up * 0.09 + edir * 0.06],
+			[0.02, 0.015, 0.002], edir.cross(up).normalized(), Color(0.45, 0.28, 0.15), Color(0.6, 0.4, 0.2))
+	var top := base + up * h
+	var tn := 3 if detail == 0 else 5
+	for k in tn:
+		var ta := float(k) * TAU / float(tn) + _h(sd + 60) * 2.0
+		var td := Vector3(cos(ta), 0.0, sin(ta))
+		var tc0 := Color(0.55, 0.6, 0.3) if not ripe else Color(0.8, 0.7, 0.4)
+		var tc1 := Color(0.75, 0.8, 0.45) if not ripe else Color(0.92, 0.85, 0.55)
+		mb.add_ribbon([top, top + td * 0.05 + up * 0.1, top + td * 0.13 + up * 0.15],
+			[0.014, 0.011, 0.002], td.cross(up).normalized(), tc0, tc1)
 
-## Known issues
-- FPS: mostly 54-61 on the TECNO BF6, but dips seen at 44 (harvesting) and 36 (manage view,
-  empty field), so not caused by crops alone. Cause unknown (heat, GC, screenshot?). Add an
-  average/minimum FPS readout before adding more content.
-- Economy: money can reach 0 (all spent on seed). Needs a safety net so the player cannot
-  get stuck with no money, no stock and no crops. Prices also need balancing (income per
-  cycle is very high).
-- CI 'Run logic tests' failed with File not found: scripts/tests/test_game_state.gd was missing
-  from the repo (wrong folder or name). The tests have not run yet. Create it at exactly
-  scripts/tests/test_game_state.gd.
-- Autopilot pivots on the spot between lanes (real U-turns do not fit between 1.5-unit rows).
-- Autopilot start is blocked if the tractor is directly behind the farmhouse; it gives up.
-- Original scripts/main.gd hung on the splash screen; cause never confirmed (suspected
-  repo typo or path). It is no longer used and can be deleted.
-- scripts/diag.gd and scenes/diag_*.tscn are diagnostics; keep until Stage 1 is verified.
-- Tap me button never counted in Stage 0 screenshots. Suspected cause: emulate_mouse_from_touch
-  was false, so Buttons got no touches. Changed to true in Step A; confirm HUD buttons work.
-
-## Stage 1 test checklist
-1. App launches (no splash hang), sky-blue background, farm visible.
-2. One-finger drag rotates; camera never flips; pitch is limited.
-3. Pinch zooms between close and far limits.
-4. Tapping a field tile turns it yellow and the panel shows its number.
-5. Tapping another tile moves the highlight; tapping ground outside the field clears it.
-6. Dragging or pinching does NOT select a tile.
-7. FPS stays near 60 and memory stays low.
-
-## Milestone 2 Step A test checklist
-1. HUD shows Money: 500 and Stock: empty (top-right) and a Sell all button.
-2. Tap a tile: the Plough button appears. Tap Plough: tile turns dark brown.
-3. Tap the ploughed tile: Plant Maize (20) and Plant Beans (12) appear.
-4. Plant maize: money drops by 20, a green crop appears and grows over ~40 s.
-5. When ripe the crop turns yellow, panel says ripe, Harvest button appears.
-6. Harvest: Stock shows Maize 4, tile returns to ploughed.
-7. Sell all: money rises by 60, stock empty.
-8. Errors: with money too low, planting shows "Not enough money".
-9. Buttons do not rotate the camera or select a tile behind them.
-
-## Milestone 2 Step B test checklist
-1. Plant a crop, swipe the app away, reopen: farm, money and the growing crop are still there.
-2. Plant a crop, close the app, wait over 40 s, reopen: message says crops are ripe.
-3. Harvest and sell, close and reopen: money and empty stock are kept.
-4. Tap Reset (top-left) once: message asks to tap again. Tap again within 3 s: farm resets.
-   Close and reopen: the reset farm is kept. Waiting more than 3 s makes it disarm.
-5. Money, stock and tile states never look corrupted after repeated close/reopen.
-
-## Milestone 3 Step A test checklist
-1. Manage view shows a Drive tractor button (bottom-right) and a tractor near the field.
-2. Tap Drive tractor: camera follows behind the tractor; steering strip (bottom-left),
-   gas strip (bottom-right), tool buttons (left) and a Fuel/Speed/Run readout appear.
-3. Hold the gas strip above its centre line: tractor drives forward. Below: reverses slower.
-4. Hold both strips at once (one finger each): the tractor steers while driving.
-5. Tractor cannot leave the fence or drive through the farmhouse.
-6. Tool: Plough, drive over unploughed tiles: they turn dark. Tool: Seeder over ploughed
-   tiles: plants the chosen seed (costs money). Tool: Harvester over ripe crops: stock rises.
-7. Fuel drops while moving. At 0 the tractor stops and says Out of fuel. Refuel costs money.
-8. Manage view returns to the farm view. Close and reopen: tractor position, fuel and tool kept.
-9. Old save from before this update still loads (money, crops kept, default tractor added).
-
-## Milestone 3 Step B test checklist
-1. In drive view, pick Tool: Plough on a fresh field and tap Auto: Start. Tractor drives to the
-   field, ploughs row by row (tiles turn dark), pivots at each end, and stops with a finished message.
-2. Pick Seeder and tap Auto again: ploughed tiles get planted (costs money). Money low = stops.
-3. When crops are ripe, pick Harvester and Auto: tractor harvests them.
-4. Touching the steering or gas strip during Auto cancels it and gives you control.
-5. Auto: Stop button stops it. Switching tool or Manage view also stops it.
-6. With Tool: None, or nothing left to do, Auto shows a message and does not start.
-7. Low fuel: it stops with Out of fuel; refuel and start again.
-
-## Polish pass test checklist
-1. Top-left shows FPS (current, avg, low) and Mem; a Menu button sits under it.
-2. Menu opens a Settings panel: Low/Medium/High (selected one in brackets), Debug info on/off,
-   Reset farm, Close. Choosing a quality shows a message; the choice is kept after restart.
-3. Low: no shadows. Medium: tractor, house, crops cast shadows. Compare FPS low on each.
-4. Crops now look like plants (maize stalks with cobs when ripe, bean bushes with pods).
-5. Text is readable over crops (black outline). Strips dim while Auto runs but still cancel it.
-6. Spend all money with nothing to sell: after a moment you get a Farm grant of 100.
-7. Drive for a few minutes: note the FPS low value and whether hitches are gone.
-
-## Visual overhaul test checklist
-1. App starts without hanging (compare FPS readout on Low, Medium, High).
-2. Field is one continuous brown surface; ploughed land has furrows; no green lines between tiles.
-3. Maize looks like maize (stalk, drooping leaves, cobs, tassel); beans look like bean bushes
-   (flowers then pods). Seedlings are small.
-4. After harvest the tile shows stubble; selecting it offers Plough; the seeder skips it.
-5. In drive view, drag on empty screen to orbit around the tractor, pinch to zoom close up,
-   tap Camera: behind to swing the view back. View the tractor from all sides.
-6. Trees, fence, farmhouse details, hills in the distance. Medium/High: sky and shadows.
-7. Note the FPS low number on each quality level and tell me if Low is still smooth.
+static func _bean_plant(mb, base: Vector3, stage: int, sd: int, detail: int) -> void:
+	var up := Vector3.UP
+	if stage == 0:
+		mb.add_prism(base, base + up * 0.05, 0.008, 0.006, 4, Color(0.4, 0.6, 0.25), Color(0.5, 0.75, 0.35))
+		for k in 2:
+			var a := float(k) * PI + _h(sd) * 2.0
+			var d := Vector3(cos(a), 0.0, sin(a))
+			mb.add_diamond(base + up * 0.05 + d * 0.06, d * 0.07 - up * 0.02, d.cross(up).normalized() * 0.05,
+				Color(0.3, 0.6, 0.2), Color(0.5, 0.82, 0.35))
+		return
+	var ripe := stage == 2
+	var h := 0.32 + 0.08 * _h(sd + 1)
+	if ripe:
+		h = 0.38 + 0.08 * _h(sd + 1)
+	var stem0 := Color(0.3, 0.45, 0.15) if not ripe else Color(0.5, 0.4, 0.2)
+	var stem1 := Color(0.45, 0.65, 0.25) if not ripe else Color(0.6, 0.5, 0.25)
+	mb.add_prism(base, base + up * h, 0.014, 0.008, 4, stem0, stem1)
+	var leaves := (5 if detail == 0 else 8) if not ripe else 4
+	var lc := Color(0.22, 0.52, 0.14) if not ripe else Color(0.58, 0.52, 0.2)
+	var lt := Color(0.38, 0.72, 0.25) if not ripe else Color(0.78, 0.7, 0.3)
+	for k in leaves:
+		var t := 0.25 + 0.7 * float(k) / float(maxi(leaves - 1, 1))
+		var a := float(k) * 2.4 + _h(sd + 10 + k)
+		var dir := Vector3(cos(a), 0.0, sin(a))
+		var side := dir.cross(up).normalized()
+		var origin := base + up * (h * t)
+		var node := origin + dir * (0.13 + 0.05 * (1.0 - t)) + up * 0.02
+		mb.add_ribbon([origin, node], [0.01, 0.008], side, stem0, stem1)
+		mb.add_diamond(node + dir * 0.07, dir * 0.075 - up * 0.02, side * 0.055, lc, lt)
+		mb.add_diamond(node + side * 0.06, side * 0.065, dir * 0.05, lc, lt)
+		mb.add_diamond(node - side * 0.06, -side * 0.065, dir * 0.05, lc, lt)
+	if stage == 1:
+		for k in 3:
+			var fa := float(k) * 2.1 + _h(sd + 20)
+			var fd := Vector3(cos(fa), 0.0, sin(fa))
+			mb.add_diamond(base + up * (h * 0.85) + fd * 0.07, up * 0.03, fd.cross(up).normalized() * 0.025,
+				Color(0.95, 0.85, 0.95), Color(0.85, 0.6, 0.8))
+		for k in 3:
+			var pa := float(k) * 2.1 + 0.7
+			var pd := Vector3(cos(pa), 0.0, sin(pa))
+			var pb := base + up * (h * 0.5) + pd * 0.03
+			mb.add_prism(pb, pb + pd * 0.05 - up * 0.1, 0.012, 0.006, 4, Color(0.3, 0.6, 0.18), Color(0.5, 0.8, 0.3))
+	else:
+		for k in 6:
+			var pa := float(k) * 1.1 + _h(sd + 30 + k)
+			var pd := Vector3(cos(pa), 0.0, sin(pa))
+			var pb := base + up * (h * (0.35 + 0.1 * float(k % 3))) + pd * 0.03
+			mb.add_prism(pb, pb + pd * 0.07 - up * 0.17, 0.016, 0.007, 4, Color(0.75, 0.58, 0.3), Color(0.5, 0.32, 0.15))
