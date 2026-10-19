@@ -12,7 +12,7 @@ var tile_nodes: Array = []
 var mesh_cache: Dictionary = {}
 
 func _ready() -> void:
-	print("[DEBUG 2.1] Starting farm_grid _ready generation loop")
+	print("Grid initialization started.")
 	tile_nodes.clear()
 	
 	for row in ROWS:
@@ -25,7 +25,7 @@ func _ready() -> void:
 			)
 			add_child(tm)
 			tile_nodes.append(tm)
-	print("[DEBUG 2.2] Generated %d layout tile grid nodes" % tile_nodes.size())
+	print("Grid nodes successfully generated.")
 
 func world_to_tile(world_pos: Vector3) -> int:
 	var cx := floori((world_pos.x + (COLS * TILE_SIZE) / 2.0) / TILE_SIZE)
@@ -97,8 +97,13 @@ func _generate_base_ground_mesh(state: String, selected: bool) -> ArrayMesh:
 	verts.append(Vector3(h, 0.0, h))
 	verts.append(Vector3(-h, 0.0, h))
 	
-	# FIXED CRITICAL BUG: Provided exact required geometry rendering triangle definitions
-	indices.append_array([0, 1, 2, 0, 2, 3])
+	# ABSOLUTE FIX: Hardcoded layout indexing vectors to map the 3D surface plane correctly
+	indices.append(0)
+	indices.append(1)
+	indices.append(2)
+	indices.append(0)
+	indices.append(2)
+	indices.append(3)
 	
 	var col := Color(0.22, 0.45, 0.15) 
 	match state:
