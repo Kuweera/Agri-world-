@@ -527,6 +527,17 @@ func _init() -> void:
 	_check(int(ev_p2["atlas"]) > int(ev_p1["atlas"]), "High shadow atlas is bigger")
 	_check(EnvironmentSetup.profile(-5)["name"] == "Low", "quality below 0 gives Low")
 	_check(EnvironmentSetup.profile(99)["name"] == "High", "quality above 2 gives High")
+
+	# --- Ground detail textures (soil, grass) ---
+	for tx_path in ["res://assets/textures/soil.png", "res://assets/textures/grass.png"]:
+		_check(ResourceLoader.exists(tx_path), "texture file imported: %s" % tx_path)
+		var tx_mat: StandardMaterial3D = MeshBuilder.textured_material(tx_path, 0.5, 1.2)
+		var tx_ok: bool = tx_mat.albedo_texture != null
+		_check(tx_ok, "texture material loads: %s" % tx_path)
+		if tx_ok:
+			_check(tx_mat.albedo_texture.get_width() <= 1024, "texture size within budget: %s" % tx_path)
+	_check(MeshBuilder.textured_material("res://nope.png", 1.0, 1.0).albedo_texture == null,
+		"missing texture falls back to plain colours")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
