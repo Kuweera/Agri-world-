@@ -17,6 +17,29 @@ static func vc_material(unshaded: bool = false) -> StandardMaterial3D:
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return m
 
+# Ground material: vertex colours tint a tiled detail texture (soil grain, grass blades).
+# The texture is projected from world space, so the meshes need no UV coordinates.
+# gain brightens the grey texture so the vertex colours keep their strength.
+# If the texture file is missing or unreadable this returns the plain vertex-colour material.
+static func textured_material(path: String, uv_scale: float, gain: float) -> StandardMaterial3D:
+	var m := vc_material()
+	if not ResourceLoader.exists(path):
+		return m
+	var src: Resource = load(path)
+	if src == null or not (src is Texture2D):
+		return m
+	var img: Image = (src as Texture2D).get_image()
+	if img == null or img.is_empty() or img.is_compressed():
+		return m
+	img.generate_mipmaps()
+	m.albedo_texture = ImageTexture.create_from_image(img)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = true
+	m.uv1_scale = Vector3(uv_scale, uv_scale, uv_scale)
+	m.albedo_color = Color(gain, gain, gain)
+	return m
+
 static func shade(c: Color, f: float) -> Color:
 	return Color(c.r * f, c.g * f, c.b * f, c.a)
 

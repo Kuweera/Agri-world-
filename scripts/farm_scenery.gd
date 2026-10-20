@@ -21,12 +21,13 @@ func _node(parent: Node3D, mesh: ArrayMesh, mat: Material, casts_shadow: bool) -
 	parent.add_child(mi)
 	return mi
 
-func build(parent: Node3D, mat: Material) -> void:
+func build(parent: Node3D, mat: Material, land_mat: Material = null) -> void:
 	var noise := FastNoiseLite.new()
 	noise.seed = 11
 	noise.frequency = 0.05
-	_node(parent, _inner_land(noise), mat, false)
-	_node(parent, _outer_land(noise), mat, false)
+	var land: Material = land_mat if land_mat != null else mat
+	_node(parent, _inner_land(noise), land, false)
+	_node(parent, _outer_land(noise), land, false)
 	_node(parent, _fence(), mat, true)
 	_node(parent, _trees(), mat, true)
 	_node(parent, _house(), mat, true)
