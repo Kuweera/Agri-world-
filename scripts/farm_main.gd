@@ -9,6 +9,7 @@ const CropData := preload("res://scripts/crop_data.gd")
 const SaveManager := preload("res://scripts/save_manager.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const VehicleModel := preload("res://scripts/vehicle_model.gd")
+const ImplementData := preload("res://scripts/implement_data.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
@@ -51,6 +52,7 @@ func _ready() -> void:
 	autopilot = AutoPilotScript.new()
 	state = GameStateScript.new()
 	var load_result: String = SaveManager.load_into(state)
+	_refresh_cfg()
 
 	grid = FarmGridScript.new()
 	add_child(grid)
@@ -126,8 +128,12 @@ func _refresh_all_tiles() -> void:
 	for i in state.tiles.size():
 		_refresh_tile(i)
 
+# Vehicle settings with the current implement's weight applied (slower with heavy tools).
+func _refresh_cfg() -> void:
+	cfg = VehicleModel.loaded_config(VehicleData.VEHICLES["tractor"], state.tractor["implement"])
+
 func _update_drive_texts() -> void:
-	var tool_name: String = VehicleData.IMPLEMENTS[state.tractor["implement"]]["name"]
+	var tool_name: String = ImplementData.name_of(state.tractor["implement"])
 	var crop_name: String = CropData.CROPS[seed_crop]["name"]
 	hud.set_drive_texts(tool_name, crop_name)
 
@@ -214,8 +220,8 @@ func _drive(dt: float) -> void:
 
 func _vehicle_text(tr: Dictionary) -> String:
 	var secs := int(float(tr["hours"]) * 3600.0)
-	return "Fuel %.1f/%d   Speed %.1f   Run %d:%02d" % [
-		tr["fuel"], int(cfg["fuel_capacity"]), absf(float(tr["speed"])),
+	return "Fuel %.1f/%d   Speed %.1f/%.1f   Run %d:%02d" % [
+		tr["fuel"], int(cfg["fuel_capacity"]), absf(float(tr["speed"])), float(cfg["max_speed"]),
 		floori(secs / 60.0), secs % 60]
 
 func _apply_work() -> void:
@@ -239,7 +245,7 @@ func _toggle_auto() -> void:
 	if autopilot.active:
 		_stop_auto("Autopilot stopped")
 		return
-	var kind: String = state.tractor["implement"]
+	var kind: String = ImplementData.type_of(state.tractor["implement"])
 	if kind == "none":
 		hud.set_message("Pick a tool first")
 		return
@@ -302,7 +308,7 @@ func _auto_summary(kind: String) -> String:
 	return text
 
 func _stop_auto(reason: String) -> void:
-	var kind: String = state.tractor["implement"]
+	var kind: String = ImplementData.type_of(state.tractor["implement"])
 	autopilot.stop(reason)
 	hud.set_auto_active(false)
 	if reason != "":
@@ -310,7 +316,7 @@ func _stop_auto(reason: String) -> void:
 	dirty = true
 
 func _auto_ended() -> void:
-	var kind: String = state.tractor["implement"]
+	var kind: String = ImplementData.type_of(state.tractor["implement"])
 	if autopilot.finished:
 		# More work may have appeared during the pass (crops ripening, missed
 		# tiles). Look again and go where work is still needed, up to 3 passes.
@@ -437,6 +443,7 @@ func _on_action(action: String) -> void:
 		if autopilot.active:
 			_stop_auto("Tool changed")
 		state.next_implement()
+		_refresh_cfg()
 		state.last_work_tile = -1
 		_update_drive_texts()
 		tractor_view.update_from(state.tractor)

@@ -5,6 +5,7 @@ extends RefCounted
 
 const CropData := preload("res://scripts/crop_data.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
+const ImplementData := preload("res://scripts/implement_data.gd")
 const FarmLayout := preload("res://scripts/farm_layout.gd")
 
 const COLS := 8
@@ -231,7 +232,7 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
 	if idx == last_work_tile:
 		return "skip"
 	last_work_tile = idx
-	return apply_implement(tractor["implement"], idx, crop_id, now)
+	return apply_implement(ImplementData.type_of(tractor["implement"]), idx, crop_id, now)
 
 # Buys fuel up to a full tank, as much as the player can afford.
 func refuel() -> String:
@@ -339,7 +340,7 @@ func from_dict(data: Dictionary) -> String:
 	if float(tr["hours"]) < 0.0:
 		return "Bad tractor"
 	var impl = tr.get("implement", "none")
-	if typeof(impl) != TYPE_STRING or not VehicleData.IMPLEMENTS.has(impl):
+	if typeof(impl) != TYPE_STRING or not VehicleData.IMPLEMENT_ORDER.has(impl):
 		return "Bad tractor"
 	money = int(d["money"])
 	inventory = inv
