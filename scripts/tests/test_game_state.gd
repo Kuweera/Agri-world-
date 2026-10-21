@@ -18,6 +18,7 @@ const CropStages := preload("res://scripts/crop_stages.gd")
 const EnvironmentSetup := preload("res://scripts/environment_setup.gd")
 const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
+const ImplementData := preload("res://scripts/implement_data.gd")
 
 var failures := 0
 
@@ -538,6 +539,79 @@ func _init() -> void:
 			_check(tx_mat.albedo_texture.get_width() <= 1024, "texture size within budget: %s" % tx_path)
 	_check(MeshBuilder.textured_material("res://nope.png", 1.0, 1.0).albedo_texture == null,
 		"missing texture falls back to plain colours")
+
+	# --- Machinery catalogue: every entry is complete and sensible ---
+	var cat_i_keys := ["id", "name", "type", "price", "work_width", "weight", "model_path", "paint"]
+	for cat_id in ImplementData.ITEMS:
+		var cat_it: Dictionary = ImplementData.ITEMS[cat_id]
+		var cat_ok := true
+		for cat_k in cat_i_keys:
+			if not cat_it.has(cat_k):
+				cat_ok = false
+		_check(cat_ok, "implement %s has all fields" % cat_id)
+		if not cat_ok:
+			continue
+		var cat_w: int = int(cat_it["work_width"])
+		cat_ok = cat_it["id"] == cat_id and ImplementData.TYPES.has(cat_it["type"])
+		cat_ok = cat_ok and cat_w >= 1 and cat_w % 2 == 1 and int(cat_it["price"]) > 0
+		cat_ok = cat_ok and float(cat_it["weight"]) > 0.0 and str(cat_it["name"]) != ""
+		_check(cat_ok, "implement %s values are valid" % cat_id)
+		var cat_mp: String = str(cat_it["model_path"])
+		_check(cat_mp == "" or cat_mp.begins_with("res://"), "implement %s model path" % cat_id)
+	for cat_t in ImplementData.TYPES:
+		var cat_ids: Array = ImplementData.ids_of_type(cat_t)
+		_check(cat_ids.size() >= 1, "implement type %s has an entry" % cat_t)
+		var cat_inc := true
+		for cat_n in range(1, cat_ids.size()):
+			var cat_p: Dictionary = ImplementData.ITEMS[cat_ids[cat_n - 1]]
+			var cat_q: Dictionary = ImplementData.ITEMS[cat_ids[cat_n]]
+			var cat_wider: bool = int(cat_q["work_width"]) > int(cat_p["work_width"])
+			var cat_heavier: bool = float(cat_q["weight"]) > float(cat_p["weight"])
+			if not (cat_wider and cat_heavier):
+				cat_inc = false
+		_check(cat_inc, "%s: wider means pricier and heavier" % cat_t)
+	for cat_s in ImplementData.ids_of_type("fertilizer"):
+		_check(int(ImplementData.ITEMS[cat_s].get("fert_per_tile", 0)) >= 1, "%s uses fertilizer" % cat_s)
+	for cat_l in VehicleData.IMPLEMENT_ORDER:
+		if cat_l != "none":
+			_check(ImplementData.ITEMS.has(cat_l), "tool %s exists in the catalogue" % cat_l)
+			_check(int(ImplementData.get_item(cat_l).get("work_width", 0)) == 1, "tool %s is 1 tile wide" % cat_l)
+	_check(ImplementData.get_item("nope").is_empty(), "unknown implement gives empty entry")
+	var cat_v_keys := ["id", "name", "type", "price", "power_hp", "max_speed", "reverse_factor", "accel",
+		"turn_rate", "fuel_capacity", "fuel_use", "fuel_price", "work_offset", "model_path", "paint"]
+	for cat_vid in VehicleData.VEHICLES:
+		var cat_v: Dictionary = VehicleData.VEHICLES[cat_vid]
+		var cat_vok := true
+		for cat_vk in cat_v_keys:
+			if not cat_v.has(cat_vk):
+				cat_vok = false
+		_check(cat_vok, "vehicle %s has all fields" % cat_vid)
+		if not cat_vok:
+			continue
+		cat_vok = cat_v["id"] == cat_vid and VehicleData.VEHICLE_TYPES.has(cat_v["type"])
+		cat_vok = cat_vok and int(cat_v["price"]) > 0 and int(cat_v["power_hp"]) > 0
+		cat_vok = cat_vok and float(cat_v["max_speed"]) > 0.0 and float(cat_v["fuel_capacity"]) > 0.0
+		cat_vok = cat_vok and float(cat_v["accel"]) > 0.0 and float(cat_v["turn_rate"]) > 0.0
+		_check(cat_vok, "vehicle %s values are valid" % cat_vid)
+		if cat_v["type"] == "harvester":
+			var cat_hw: int = int(cat_v.get("work_width", 0))
+			_check(cat_hw >= 1 and cat_hw % 2 == 1, "combine %s has an odd work width" % cat_vid)
+	for cat_vt in VehicleData.VEHICLE_TYPES:
+		var cat_vids: Array = VehicleData.ids_of_type(cat_vt)
+		_check(cat_vids.size() >= 2, "vehicle type %s has a small and a large entry" % cat_vt)
+		var cat_vinc := true
+		for cat_vn in range(1, cat_vids.size()):
+			var cat_hp_now: int = int(VehicleData.VEHICLES[cat_vids[cat_vn]]["power_hp"])
+			var cat_hp_prev: int = int(VehicleData.VEHICLES[cat_vids[cat_vn - 1]]["power_hp"])
+			if cat_hp_now <= cat_hp_prev:
+				cat_vinc = false
+		_check(cat_vinc, "%s: pricier means more power" % cat_vt)
+	_check(VehicleData.VEHICLES.has(VehicleData.DEFAULT_VEHICLE), "default vehicle exists")
+	var cat_dt: Dictionary = VehicleData.get_vehicle("tractor")
+	var cat_same: bool = float(cat_dt["max_speed"]) == 4.0 and float(cat_dt["fuel_capacity"]) == 20.0
+	cat_same = cat_same and float(cat_dt["work_offset"]) == 1.8
+	_check(cat_same, "default tractor numbers unchanged")
+	_check(VehicleData.get_vehicle("nope").is_empty(), "unknown vehicle gives empty entry")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
