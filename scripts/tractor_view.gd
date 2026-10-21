@@ -5,10 +5,17 @@ extends Node3D
 
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
+const ImplementModels := preload("res://scripts/implement_models.gd")
+const Suspension := preload("res://scripts/suspension.gd")
 
 var impl_nodes := {}
 var wheels: Array = []     # [{"node": MeshInstance3D, "radius": float, "angle": float}]
 var blob: MeshInstance3D
+var attach: Node3D                       # AttachmentPoint: implements built from the catalogue hang here
+var susp := Suspension.new_state()       # springs for lean and bounce (looks only)
+var prev_speed := 0.0
+var prev_heading := 0.0
+var motion_ready := false
 var mat_vc: StandardMaterial3D
 
 func _mesh_node(parent: Node3D, mesh: ArrayMesh, pos: Vector3 = Vector3.ZERO) -> MeshInstance3D:
@@ -108,7 +115,14 @@ func _ready() -> void:
 	fb.add_prism(Vector3(0, 0.62, -2.25), Vector3(0, 0.58, -2.25), 0.45, 0.45, 10, steel, steel, true, true)
 	_mesh_node(spreader, fb.build())
 	add_child(spreader)
-	impl_nodes["fertilizer"] = spreader
+	impl_nodes["spreader"] = spreader
+
+	# Hitch at the rear of the tractor. Wide and extra implements are built from the catalogue
+	# and attached here the first time they are used.
+	attach = Node3D.new()
+	attach.name = "AttachmentPoint"
+	attach.position = Vector3(0, 0.35, -1.25)
+	add_child(attach)
 
 	# Cheap blob shadow (visible when real shadows are off)
 	var bb := MeshBuilder.new()
@@ -128,14 +142,33 @@ func set_blob_visible(on: bool) -> void:
 	if blob != null:
 		blob.visible = on
 
+# Builds the model for a catalogue implement the first time it is shown.
+func _ensure_implement(id: String) -> void:
+	if id == "none" or impl_nodes.has(id) or not ImplementData.ITEMS.has(id):
+		return
+	impl_nodes[id] = _mesh_node(attach, ImplementModels.build(id))
+
 func update_from(v: Dictionary, dt: float = 0.0) -> void:
-	position = Vector3(v["x"], 0.0, v["z"])
-	rotation.y = v["heading"]
-	var shown: String = ImplementData.type_of(v["implement"])
-	for k in impl_nodes:
-		impl_nodes[k].visible = (k == shown)
+	var id: String = v["implement"]
+	_ensure_implement(id)
+	var heading: float = v["heading"]
+	var sp: float = v["speed"]
 	if dt > 0.0:
-		var sp: float = v["speed"]
+		if motion_ready:
+			var acc: float = (sp - prev_speed) / dt
+			var yaw_rate: float = wrapf(heading - prev_heading, -PI, PI) / dt
+			Suspension.step(susp, acc, sp, yaw_rate, dt)
+		prev_speed = sp
+		prev_heading = heading
+		motion_ready = true
+	else:
+		motion_ready = false
+	position = Vector3(v["x"], float(susp["bounce"]), v["z"])
+	rotation = Vector3(float(susp["pitch"]), heading, float(susp["roll"]))
+	attach.rotation.x = float(susp["impl_pitch"])
+	for k in impl_nodes:
+		impl_nodes[k].visible = (k == id)
+	if dt > 0.0:
 		for w in wheels:
 			w["angle"] = fposmod(float(w["angle"]) + sp * dt / float(w["radius"]), TAU)
 			w["node"].rotation.x = w["angle"]
