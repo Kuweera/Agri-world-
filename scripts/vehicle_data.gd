@@ -125,9 +125,8 @@ static func ids_of_type(vehicle_type: String) -> Array:
 	return out
 
 # Order the Tool button cycles through. Every id after "none" is in implement_data.gd.
-# Spreaders join this list once fertilizer works on tiles.
 const IMPLEMENT_ORDER := ["none", "plough", "plough_3", "plough_5", "seeder", "seeder_3",
-	"seeder_5", "harvester", "harvester_3"]
+	"seeder_5", "spreader", "spreader_3", "spreader_5", "harvester", "harvester_3"]
 
 const IMPLEMENTS := {
 	"none": {"name": "None"},
