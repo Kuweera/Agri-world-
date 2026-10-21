@@ -19,6 +19,8 @@ const EnvironmentSetup := preload("res://scripts/environment_setup.gd")
 const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
+const ImplementModels := preload("res://scripts/implement_models.gd")
+const Suspension := preload("res://scripts/suspension.gd")
 
 var failures := 0
 
@@ -833,6 +835,77 @@ func _init() -> void:
 	sv3["tiles"][0]["fertilized"] = true
 	var sv_clean = GameState.new()
 	_check(sv_clean.from_dict(sv3) == "" and not sv_clean.tiles[0]["fertilized"], "flag on bare ground is dropped")
+
+	# --- Implement models: sized from the catalogue ---
+	var im_ids: Array = ImplementData.ITEMS.keys()
+	for im_id in im_ids:
+		var im_b = ImplementModels.build_builder(im_id)
+		var im_w: float = float(ImplementData.width_of(im_id)) * 1.5
+		var im_tris: int = im_b.triangle_count()
+		_check(im_tris >= 30 and im_tris <= 800, "%s model size (%d triangles)" % [im_id, im_tris])
+		var im_min := Vector3(1e9, 1e9, 1e9)
+		var im_max := Vector3(-1e9, -1e9, -1e9)
+		var im_finite := true
+		for im_v in im_b.verts:
+			if not (is_finite(im_v.x) and is_finite(im_v.y) and is_finite(im_v.z)):
+				im_finite = false
+			im_min = im_min.min(im_v)
+			im_max = im_max.max(im_v)
+		_check(im_finite, "%s model has finite vertices" % im_id)
+		var im_span: float = im_max.x - im_min.x
+		_check(im_span >= im_w * 0.9 and im_span <= im_w * 1.15, "%s is as wide as its work width" % im_id)
+		_check(im_max.z <= 0.2 and im_min.z >= -2.2, "%s trails behind the hitch" % im_id)
+		_check(im_min.y >= -0.02 and im_max.y <= 2.0, "%s stays between ground and 2 units" % im_id)
+	for im_t in ImplementData.TYPES:
+		var im_sorted: Array = ImplementData.ids_of_type(im_t)
+		var im_grows := true
+		for im_n in range(1, im_sorted.size()):
+			var im_a = ImplementModels.build_builder(im_sorted[im_n - 1])
+			var im_c = ImplementModels.build_builder(im_sorted[im_n])
+			if im_c.triangle_count() <= im_a.triangle_count():
+				im_grows = false
+		_check(im_grows, "%s: wider models have more detail" % im_t)
+	_check(ImplementModels.build_builder("bogus").triangle_count() == 0, "unknown implement has no model")
+	_check(ImplementModels.width_units("plough_5") == 7.5, "5-wide model is 7.5 units")
+	# --- Suspension (looks only) ---
+	var sp_s := Suspension.new_state()
+	for sp_i in 100:
+		Suspension.step(sp_s, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	_check(absf(float(sp_s["pitch"])) < 0.000001 and absf(float(sp_s["bounce"])) < 0.000001, "rest stays still")
+	sp_s = Suspension.new_state()
+	for sp_i in 60:
+		Suspension.step(sp_s, -8.0, 2.0, 0.0, 1.0 / 60.0)
+	_check(float(sp_s["pitch"]) > 0.03 and float(sp_s["pitch"]) <= Suspension.MAX_PITCH, "braking dips the nose")
+	_check(float(sp_s["impl_pitch"]) < 0.0, "the implement swings the other way")
+	for sp_i in 300:
+		Suspension.step(sp_s, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	_check(absf(float(sp_s["pitch"])) < 0.002 and absf(float(sp_s["impl_pitch"])) < 0.002, "springs settle after braking")
+	var sp_up := Suspension.new_state()
+	for sp_i in 60:
+		Suspension.step(sp_up, 6.0, 2.0, 0.0, 1.0 / 60.0)
+	_check(float(sp_up["pitch"]) < -0.02, "accelerating lifts the nose")
+	var sp_l := Suspension.new_state()
+	var sp_r := Suspension.new_state()
+	for sp_i in 60:
+		Suspension.step(sp_l, 0.0, 3.0, 1.0, 1.0 / 60.0)
+		Suspension.step(sp_r, 0.0, 3.0, -1.0, 1.0 / 60.0)
+	_check(absf(float(sp_l["roll"])) > 0.01 and absf(float(sp_l["roll"]) + float(sp_r["roll"])) < 0.000001, "turns lean opposite ways")
+	var sp_b := Suspension.new_state()
+	var sp_peak := 0.0
+	for sp_i in 600:
+		Suspension.step(sp_b, 0.0, 3.0, 0.0, 1.0 / 60.0)
+		sp_peak = maxf(sp_peak, absf(float(sp_b["bounce"])))
+	_check(sp_peak > 0.002 and sp_peak <= Suspension.MAX_BOUNCE, "driving bounces a little")
+	var sp_x := Suspension.new_state()
+	var sp_ok := true
+	for sp_i in 5000:
+		var sp_a := 1000000.0 if sp_i % 2 == 0 else -1000000.0
+		Suspension.step(sp_x, sp_a, 50.0, sp_a, 1.0)
+		for sp_k in ["pitch", "roll", "bounce", "impl_pitch"]:
+			if not is_finite(float(sp_x[sp_k])):
+				sp_ok = false
+	_check(sp_ok, "extreme inputs stay finite")
+	_check(absf(float(sp_x["pitch"])) <= Suspension.MAX_PITCH and absf(float(sp_x["roll"])) <= Suspension.MAX_ROLL, "lean stays limited")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
