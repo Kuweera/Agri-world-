@@ -53,22 +53,25 @@ jobs:
       - name: Export game APK
         if: always()
         run: |
-          # Smaller install: 64-bit only (every phone from the last several years), and a
-          # release build (the debug engine is much bigger). Falls back to the debug build
-          # if the release export fails, so you always get an APK to test.
+          # One APK per phone type, each much smaller than a combined one:
+          #   armeabi-v7a = 32-bit phones (budget phones like the TECNO Pop 7 need this one)
+          #   arm64-v8a   = 64-bit phones
+          # Each is a release build, with the debug build as a fallback if release fails.
           export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/debug.keystore"
           export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
           export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
-          [ -f export_presets.cfg ] && sed -i 's|^architectures/armeabi-v7a=.*|architectures/armeabi-v7a=false|' export_presets.cfg
-          grep -n "architectures" export_presets.cfg || true
-          for v in main; do
-            sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/$v.tscn\"|" project.godot
-            grep main_scene project.godot
-            if godot --headless --verbose --export-release "Android" build/android/agriworld-$v.apk; then
-              echo "EXPORT: release build"
+          sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/main.tscn\"|" project.godot
+          grep main_scene project.godot
+          for abi in armeabi-v7a arm64-v8a; do
+            sed -i 's|^architectures/armeabi-v7a=.*|architectures/armeabi-v7a=false|' export_presets.cfg || true
+            sed -i 's|^architectures/arm64-v8a=.*|architectures/arm64-v8a=false|' export_presets.cfg || true
+            sed -i "s|^architectures/$abi=.*|architectures/$abi=true|" export_presets.cfg || true
+            grep -n "architectures" export_presets.cfg || true
+            if godot --headless --verbose --export-release "Android" build/android/agriworld-main-$abi.apk; then
+              echo "EXPORT $abi: release build"
             else
-              echo "EXPORT: release failed, using debug build"
-              godot --headless --verbose --export-debug "Android" build/android/agriworld-$v.apk
+              echo "EXPORT $abi: release failed, using debug build"
+              godot --headless --verbose --export-debug "Android" build/android/agriworld-main-$abi.apk
             fi
           done
 
