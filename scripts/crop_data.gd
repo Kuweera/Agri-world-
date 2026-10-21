@@ -4,6 +4,10 @@ extends RefCounted
 # visual.stages: each stage starts at progress "from" (0.0 to 1.0).
 # The thresholds match crop_models.gd stage_for (0.34 and 1.0).
 
+# Fertilizer: bought per unit, one unit treats one tile. A fertilized tile gives
+# yield_bonus extra crop (0.5 means +50%) when harvested.
+const FERTILIZER := {"name": "Fertilizer", "price": 5, "yield_bonus": 0.5}
+
 const CROPS := {
 	"maize": {
 		"name": "Maize",
