@@ -100,6 +100,16 @@ func _ready() -> void:
 	add_child(harvester)
 	impl_nodes["harvester"] = harvester
 
+	var blue := Color(0.2, 0.45, 0.75)
+	var spreader := Node3D.new()
+	var fb := MeshBuilder.new()
+	fb.add_box(Vector3(0, 0.55, -1.5), Vector3(1.4, 0.08, 0.1), dark)
+	fb.add_prism(Vector3(0, 1.3, -1.85), Vector3(0, 0.75, -1.85), 0.55, 0.15, 10, blue, blue, true)
+	fb.add_prism(Vector3(0, 0.62, -2.25), Vector3(0, 0.58, -2.25), 0.45, 0.45, 10, steel, steel, true, true)
+	_mesh_node(spreader, fb.build())
+	add_child(spreader)
+	impl_nodes["fertilizer"] = spreader
+
 	# Cheap blob shadow (visible when real shadows are off)
 	var bb := MeshBuilder.new()
 	bb.add_flat_quad(Vector3(-0.95, 0.03, -1.4), Vector3(1.25, 0.03, -1.4), Vector3(1.25, 0.03, 1.7), Vector3(-0.95, 0.03, 1.7), Color(0, 0, 0, 1))
