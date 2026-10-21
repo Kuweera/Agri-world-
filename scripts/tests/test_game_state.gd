@@ -34,6 +34,23 @@ func _cleanup(path: String) -> void:
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
 
+# Puts the tractor so its work point is the given world point (heading 0, moving) and works once.
+func _wide_work(s, c: Vector2, impl: String, vcfg: Dictionary, now: float, crop: String) -> String:
+	s.tractor["implement"] = impl
+	s.tractor["heading"] = 0.0
+	s.tractor["speed"] = 1.0
+	s.tractor["x"] = c.x
+	s.tractor["z"] = c.y + float(vcfg["work_offset"])
+	s.last_work_tile = -1
+	return s.work_with_tractor(vcfg, now, crop)
+
+func _states(s, st: String) -> Array:
+	var out: Array = []
+	for k in s.tiles.size():
+		if s.tiles[k]["state"] == st:
+			out.append(k)
+	return out
+
 func _run(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, frames: int) -> void:
 	for i in frames:
 		VehicleModel.step(v, cfg, throttle, steer, 1.0 / 60.0)
@@ -682,6 +699,140 @@ func _init() -> void:
 	dr_work.tractor["z"] = dr_pz + float(dr_cfg["work_offset"])
 	_check(dr_work.work_with_tractor(dr_cfg, 0.0, "maize") == "", "wide plough works a tile")
 	_check(dr_work.tiles[0]["state"] == "ploughed", "wide plough ploughs the tile")
+
+	# --- Wide work and fertilizer ---
+	_check(GameState.SCHEMA_VERSION == 3, "save format is version 3")
+	var fw_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
+	var fw_sum := {}
+	var fw_cnt := {}
+	for fw_gx in range(-48, 49):
+		for fw_gz in range(-48, 49):
+			var fw_i: int = FarmLayout.world_to_tile(fw_gx * 0.25, fw_gz * 0.25)
+			if fw_i >= 0:
+				fw_sum[fw_i] = fw_sum.get(fw_i, Vector2.ZERO) + Vector2(fw_gx * 0.25, fw_gz * 0.25)
+				fw_cnt[fw_i] = int(fw_cnt.get(fw_i, 0)) + 1
+	_check(fw_cnt.size() == 64, "all 64 tiles found on the ground")
+	var fw_c27: Vector2 = fw_sum[27] / float(fw_cnt[27])
+	var fw_c0: Vector2 = fw_sum[0] / float(fw_cnt[0])
+	_check(FarmLayout.world_to_tile(fw_c27.x + GameState.TILE_PITCH, fw_c27.y) == 28, "tile pitch matches the layout")
+	var fw_s = GameState.new()
+	_check(_wide_work(fw_s, fw_c27, "plough", fw_cfg, 0.0, "maize") == "", "1-wide plough works")
+	_check(_states(fw_s, "ploughed") == [27], "1-wide plough works only one tile")
+	fw_s = GameState.new()
+	_check(_wide_work(fw_s, fw_c27, "plough_3", fw_cfg, 0.0, "maize") == "", "3-wide plough works")
+	_check(_states(fw_s, "ploughed") == [26, 27, 28], "3-wide plough takes both neighbours")
+	_check(fw_s.last_worked_tiles.size() == 3, "3-wide plough reports 3 tiles")
+	fw_s = GameState.new()
+	_wide_work(fw_s, fw_c27, "plough_5", fw_cfg, 0.0, "maize")
+	_check(_states(fw_s, "ploughed") == [25, 26, 27, 28, 29], "5-wide plough takes 5 tiles")
+	fw_s = GameState.new()
+	_wide_work(fw_s, fw_c0, "plough_3", fw_cfg, 0.0, "maize")
+	_check(_states(fw_s, "ploughed") == [0, 1], "wide plough stops at the field edge")
+	fw_s = GameState.new()
+	for fw_t in [26, 27, 28]:
+		fw_s.tiles[fw_t]["state"] = "ploughed"
+	_check(_wide_work(fw_s, fw_c27, "seeder_3", fw_cfg, 0.0, "maize") == "", "wide seeder works")
+	_check(_states(fw_s, "growing") == [26, 27, 28] and fw_s.money == 440, "wide seeder pays 3 seeds")
+	fw_s = GameState.new()
+	for fw_t in [26, 27, 28]:
+		fw_s.tiles[fw_t]["state"] = "ploughed"
+	fw_s.money = 30
+	_check(_wide_work(fw_s, fw_c27, "seeder_3", fw_cfg, 0.0, "maize") == "", "partly paid wide pass still works")
+	_check(_states(fw_s, "growing") == [27] and fw_s.money == 10, "wide seeder plants what money allows")
+	_check(fw_s.last_work_error == "Not enough money", "wide seeder says money ran out")
+	fw_s = GameState.new()
+	for fw_t in [26, 27, 28]:
+		fw_s.tiles[fw_t]["state"] = "ploughed"
+	fw_s.money = 5
+	_check(_wide_work(fw_s, fw_c27, "seeder_3", fw_cfg, 0.0, "maize") == "Not enough money", "no money plants nothing")
+	_check(_states(fw_s, "growing").is_empty(), "no seeds without money")
+	fw_s = GameState.new()
+	for fw_t in [26, 27, 28]:
+		fw_s.tiles[fw_t]["state"] = "growing"
+		fw_s.tiles[fw_t]["crop"] = "maize"
+		fw_s.tiles[fw_t]["planted_at"] = 0.0
+	_check(_wide_work(fw_s, fw_c27, "harvester_3", fw_cfg, 1000.0, "maize") == "", "wide header harvests")
+	_check(int(fw_s.inventory.get("maize", 0)) == 12 and _states(fw_s, "stubble") == [26, 27, 28], "3 tiles of maize")
+	# Fertilizer rules
+	var fe = GameState.new()
+	fe.tiles[5]["state"] = "ploughed"
+	fe.fertilizer = 2
+	_check(fe.fertilize(5, 0.0) == "" and fe.tiles[5]["fertilized"], "fertilize a ploughed tile")
+	_check(fe.fertilizer == 1, "fertilizing uses stock first")
+	_check(fe.fertilize(5, 0.0) == "skip", "a fertilized tile is skipped")
+	fe.tiles[6]["state"] = "ploughed"
+	fe.fertilizer = 0
+	_check(fe.fertilize(6, 0.0) == "" and fe.money == 495, "missing fertilizer is bought at 5")
+	fe.tiles[7]["state"] = "ploughed"
+	fe.money = 3
+	_check(fe.fertilize(7, 0.0) == "Not enough money" and not fe.tiles[7]["fertilized"], "cannot afford fertilizer")
+	_check(fe.fertilize(8, 0.0) == "skip", "unploughed ground is skipped")
+	fe.tiles[9]["state"] = "stubble"
+	_check(fe.fertilize(9, 0.0) == "skip", "stubble is skipped")
+	_check(fe.fertilize(-1, 0.0) == "Select a tile first", "bad tile index")
+	fe.money = 500
+	fe.tiles[10]["state"] = "ploughed"
+	fe.plant(10, "maize", 0.0)
+	_check(fe.fertilize(10, 5.0) == "" and fe.tiles[10]["fertilized"], "fertilize a growing crop")
+	fe.tiles[11]["state"] = "ploughed"
+	fe.plant(11, "maize", 0.0)
+	_check(fe.fertilize(11, 1000.0) == "skip" and not fe.tiles[11]["fertilized"], "a ripe crop is not fertilized")
+	var fz2 = GameState.new()
+	fz2.tiles[0]["state"] = "ploughed"
+	fz2.tiles[1]["state"] = "ploughed"
+	fz2.fertilize(1, 0.0)
+	fz2.plant(0, "maize", 0.0)
+	fz2.plant(1, "maize", 0.0)
+	fz2.harvest(0, 100.0)
+	fz2.harvest(1, 100.0)
+	_check(int(fz2.inventory.get("maize", 0)) == 10, "fertilized maize gives 6 and plain gives 4")
+	_check(not fz2.tiles[1]["fertilized"] and fz2.tiles[1]["state"] == "stubble", "harvest clears fertilizer")
+	fw_s = GameState.new()
+	for fw_t in [26, 27, 28]:
+		fw_s.tiles[fw_t]["state"] = "ploughed"
+	fw_s.fertilizer = 3
+	_check(_wide_work(fw_s, fw_c27, "spreader_3", fw_cfg, 0.0, "maize") == "", "wide spreader works")
+	_check(fw_s.fertilizer == 0 and fw_s.tiles[26]["fertilized"] and fw_s.tiles[28]["fertilized"], "wide spreader uses 3 units")
+	fw_s.fertilizer = 3
+	_check(fw_s.inventory_text() == "Stock: Fertilizer 3", "fertilizer shows in stock text")
+	_check(GameState.new().inventory_text() == "Stock: empty", "no fertilizer: stock text unchanged")
+	var fz3 = GameState.new()
+	fz3.fertilizer = 4
+	fz3.inventory["maize"] = 2
+	fz3.sell_all()
+	_check(fz3.fertilizer == 4, "selling crops never sells fertilizer")
+	_check(fz3.can_work("fertilizer", 0, 0.0) == false, "fertilizer cannot work unploughed ground")
+	fz3.tiles[0]["state"] = "ploughed"
+	_check(fz3.can_work("fertilizer", 0, 0.0), "fertilizer can work ploughed ground")
+	# Saving: version 3, migration from version 2, and bad data
+	var sv = GameState.new()
+	sv.fertilizer = 7
+	sv.tiles[5]["state"] = "ploughed"
+	sv.tiles[5]["fertilized"] = true
+	var sv_json = JSON.parse_string(JSON.stringify(sv.to_dict()))
+	var sv_back = GameState.new()
+	_check(sv_back.from_dict(sv_json) == "", "version 3 save loads")
+	_check(sv_back.fertilizer == 7 and sv_back.tiles[5]["fertilized"], "fertilizer stock and tile flag survive")
+	var sv2: Dictionary = sv.to_dict()
+	sv2["schema_version"] = 2
+	sv2.erase("fertilizer")
+	for fw_t in sv2["tiles"]:
+		fw_t.erase("fertilized")
+	var sv_mig = GameState.new()
+	_check(sv_mig.from_dict(sv2) == "", "version 2 save is accepted")
+	_check(sv_mig.fertilizer == 0 and not sv_mig.tiles[5]["fertilized"], "version 2 save gets no fertilizer")
+	var sv3: Dictionary = sv.to_dict()
+	sv3["fertilizer"] = -1
+	_check(GameState.new().from_dict(sv3) != "", "rejects negative fertilizer")
+	sv3["fertilizer"] = "lots"
+	_check(GameState.new().from_dict(sv3) != "", "rejects text fertilizer")
+	sv3 = sv.to_dict()
+	sv3["tiles"][0]["fertilized"] = "yes"
+	_check(GameState.new().from_dict(sv3) != "", "rejects a bad fertilized flag")
+	sv3 = sv.to_dict()
+	sv3["tiles"][0]["fertilized"] = true
+	var sv_clean = GameState.new()
+	_check(sv_clean.from_dict(sv3) == "" and not sv_clean.tiles[0]["fertilized"], "flag on bare ground is dropped")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
