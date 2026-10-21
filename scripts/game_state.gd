@@ -11,17 +11,23 @@ const FarmLayout := preload("res://scripts/farm_layout.gd")
 const COLS := 8
 const ROWS := 8
 const START_MONEY := 500
-const SCHEMA_VERSION := 2
+const SCHEMA_VERSION := 3
 const RELIEF_AMOUNT := 100
 const STATES := ["unploughed", "ploughed", "growing", "stubble"]
 # After a harvest the land is left as stubble and must be ploughed again before replanting.
 const HARVEST_LEAVES_STUBBLE := true
+# Distance between tile centres, used to find the tiles beside a wide implement.
+# farm_grid.gd uses the same spacing; a test checks they agree.
+const TILE_PITCH := 1.5
 
 var money: int = START_MONEY
 var inventory: Dictionary = {}
 var tiles: Array = []
 var tractor: Dictionary = {}
 var last_work_tile := -1   # not saved: stops a tile being worked twice in one pass
+var fertilizer: int = 0    # units in stock (kept apart from crops so selling never touches it)
+var last_worked_tiles: Array = []   # not saved: tiles changed by the last work_with_tractor call
+var last_work_error := ""          # not saved: why part of a wide pass could not be done
 
 func _init() -> void:
 	tractor = default_tractor()
@@ -33,6 +39,7 @@ func _init() -> void:
 				"state": "unploughed",
 				"crop": "",
 				"planted_at": 0.0,
+				"fertilized": false,
 			})
 
 func _valid(i: int) -> bool:
@@ -86,10 +93,34 @@ func harvest(i: int, now: float) -> String:
 		return "Not ripe yet"
 	var crop_id: String = tiles[i]["crop"]
 	var amount: int = CropData.CROPS[crop_id]["yield"]
+	if tiles[i].get("fertilized", false):
+		amount = roundi(float(amount) * (1.0 + float(CropData.FERTILIZER["yield_bonus"])))
 	inventory[crop_id] = int(inventory.get(crop_id, 0)) + amount
 	tiles[i]["state"] = "stubble" if HARVEST_LEAVES_STUBBLE else "ploughed"
 	tiles[i]["crop"] = ""
 	tiles[i]["planted_at"] = 0.0
+	tiles[i]["fertilized"] = false
+	return ""
+
+# Fertilizes a ploughed or growing (not yet ripe) tile. Uses stock first, and buys any
+# missing units at the fertilizer price. Returns "" (done), "skip" (nothing to do)
+# or an error message. Nothing is taken if it cannot be paid for.
+func fertilize(i: int, now: float, per_tile: int = 1) -> String:
+	if not _valid(i):
+		return "Select a tile first"
+	var t: Dictionary = tiles[i]
+	if t["state"] != "ploughed" and t["state"] != "growing":
+		return "skip"
+	if t.get("fertilized", false) or is_ripe(i, now):
+		return "skip"
+	var from_stock := mini(fertilizer, per_tile)
+	var to_buy := per_tile - from_stock
+	var cost: int = to_buy * int(CropData.FERTILIZER["price"])
+	if money < cost:
+		return "Not enough money"
+	fertilizer -= from_stock
+	money -= cost
+	t["fertilized"] = true
 	return ""
 
 # Sells everything in stock. Returns the money earned.
@@ -107,6 +138,8 @@ func inventory_text() -> String:
 		var n := int(inventory.get(crop_id, 0))
 		if n > 0:
 			parts.append("%s %d" % [CropData.CROPS[crop_id]["name"], n])
+	if fertilizer > 0:
+		parts.append("%s %d" % [CropData.FERTILIZER["name"], fertilizer])
 	if parts.is_empty():
 		return "Stock: empty"
 	return "Stock: " + ", ".join(parts)
@@ -149,6 +182,8 @@ func apply_implement(kind: String, i: int, crop_id: String, now: float) -> Strin
 		if not is_ripe(i, now):
 			return "skip"
 		return harvest(i, now)
+	if kind == "fertilizer":
+		return fertilize(i, now)
 	return "Unknown tool"
 
 func _min_seed_cost() -> int:
@@ -180,6 +215,8 @@ func can_work(kind: String, i: int, now: float) -> bool:
 		return st == "ploughed"
 	if kind == "harvester":
 		return is_ripe(i, now)
+	if kind == "fertilizer":
+		return (st == "ploughed" or st == "growing") and not tiles[i].get("fertilized", false) and not is_ripe(i, now)
 	return false
 
 # Field rows (0..ROWS-1) where the tool has at least one tile to work.
@@ -215,24 +252,55 @@ func jobs_for(kind: String, now: float) -> Array:
 			jobs.append({"row": row, "c0": c0, "c1": c1})
 	return jobs
 
-# Works the tile behind the tractor, once each time it enters a new tile.
-# Returns "" (did something), "skip" (nothing to do) or an error message.
-# After "", `last_work_tile` is the tile that changed.
+# Works the tile behind the tractor, once each time it enters a new tile. A wide
+# implement also works the tiles beside it (work_width tiles across, centred).
+# Returns "" if at least one tile changed, "skip" if there was nothing to do, or an
+# error message if nothing could be done. When part of a wide pass fails (for example
+# the money ran out) the rest is still done and `last_work_error` says why.
+# After "", `last_worked_tiles` lists every tile that changed.
 func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
-	if tractor["implement"] == "none" or absf(float(tractor["speed"])) < 0.1:
+	last_worked_tiles = []
+	last_work_error = ""
+	var impl_id: String = tractor["implement"]
+	if impl_id == "none" or absf(float(tractor["speed"])) < 0.1:
 		return "skip"
 	var off: float = cfg["work_offset"]
 	var h: float = tractor["heading"]
-	var idx := FarmLayout.world_to_tile(
-		float(tractor["x"]) - sin(h) * off,
-		float(tractor["z"]) - cos(h) * off)
+	var cx := float(tractor["x"]) - sin(h) * off
+	var cz := float(tractor["z"]) - cos(h) * off
+	var idx := FarmLayout.world_to_tile(cx, cz)
 	if idx < 0:
 		last_work_tile = -1
 		return "skip"
 	if idx == last_work_tile:
 		return "skip"
 	last_work_tile = idx
-	return apply_implement(ImplementData.type_of(tractor["implement"]), idx, crop_id, now)
+	var targets: Array = [idx]
+	var half := int((ImplementData.width_of(impl_id) - 1) / 2)
+	for k in range(1, half + 1):
+		for side in [-1.0, 1.0]:
+			var nj := FarmLayout.world_to_tile(
+				cx + cos(h) * side * float(k) * TILE_PITCH,
+				cz - sin(h) * side * float(k) * TILE_PITCH)
+			if nj >= 0 and not targets.has(nj):
+				targets.append(nj)
+	var kind: String = ImplementData.type_of(impl_id)
+	var per_tile := int(ImplementData.get_item(impl_id).get("fert_per_tile", 1))
+	for j in targets:
+		var res := ""
+		if kind == "fertilizer":
+			res = fertilize(j, now, per_tile)
+		else:
+			res = apply_implement(kind, j, crop_id, now)
+		if res == "":
+			last_worked_tiles.append(j)
+		elif res != "skip" and last_work_error == "":
+			last_work_error = res
+	if not last_worked_tiles.is_empty():
+		return ""
+	if last_work_error != "":
+		return last_work_error
+	return "skip"
 
 # Buys fuel up to a full tank, as much as the player can afford.
 func refuel() -> String:
@@ -257,6 +325,7 @@ func to_dict() -> Dictionary:
 			"state": t["state"],
 			"crop": t["crop"],
 			"planted_at": t["planted_at"],
+			"fertilized": t.get("fertilized", false),
 		})
 	var tr := tractor.duplicate()
 	tr.erase("speed")
@@ -264,6 +333,7 @@ func to_dict() -> Dictionary:
 		"schema_version": SCHEMA_VERSION,
 		"money": money,
 		"inventory": inventory.duplicate(),
+		"fertilizer": fertilizer,
 		"tiles": out_tiles,
 		"tractor": tr,
 	}
@@ -276,6 +346,9 @@ func migrate(data: Dictionary) -> Dictionary:
 		tr.erase("speed")
 		d["tractor"] = tr
 		d["schema_version"] = 2
+	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 2:
+		d["fertilizer"] = 0
+		d["schema_version"] = 3
 	return d
 
 func _is_num(v: Variant) -> bool:
@@ -298,6 +371,9 @@ func from_dict(data: Dictionary) -> String:
 			return "Bad stock"
 		if int(n) > 0:
 			inv[k] = int(n)
+	var fert = d.get("fertilizer", 0)
+	if not _is_num(fert) or fert < 0 or not is_finite(float(fert)):
+		return "Bad fertilizer"
 	if not d.has("tiles") or typeof(d["tiles"]) != TYPE_ARRAY or d["tiles"].size() != COLS * ROWS:
 		return "Bad tiles"
 	var new_tiles: Array = []
@@ -318,12 +394,17 @@ func from_dict(data: Dictionary) -> String:
 		var planted = t.get("planted_at", 0.0)
 		if not _is_num(planted):
 			return "Bad time"
+		var fz = t.get("fertilized", false)
+		if typeof(fz) != TYPE_BOOL:
+			return "Bad tile"
+		fz = fz and (st == "ploughed" or st == "growing")
 		new_tiles.append({
 			"col": i % COLS,
 			"row": floori(float(i) / float(COLS)),
 			"state": st,
 			"crop": crop,
 			"planted_at": float(planted),
+			"fertilized": fz,
 		})
 	var tr = d.get("tractor")
 	if typeof(tr) != TYPE_DICTIONARY:
@@ -344,6 +425,7 @@ func from_dict(data: Dictionary) -> String:
 		return "Bad tractor"
 	money = int(d["money"])
 	inventory = inv
+	fertilizer = int(fert)
 	tiles = new_tiles
 	tractor = {
 		"x": float(tr["x"]),
