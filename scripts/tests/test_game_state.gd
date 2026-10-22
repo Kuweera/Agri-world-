@@ -77,6 +77,30 @@ func _auto_job(s, kind: String, now0: float, fuel: float = 20.0) -> Dictionary:
 		t += dt
 	return {"started": true, "time": t, "finished": ap.finished, "message": ap.message, "est": 0.0}
 
+# Runs the autopilot with any catalogue implement (loaded speed, wide lanes). Returns what happened.
+func _auto_wide(s, impl: String, now0: float, fuel: float = 20.0) -> Dictionary:
+	var ap = AutoPilotScript.new()
+	var vcfg: Dictionary = VehicleModel.loaded_config(VehicleData.VEHICLES["tractor"], impl)
+	var kind: String = ImplementData.type_of(impl)
+	s.tractor["implement"] = impl
+	s.tractor["fuel"] = fuel
+	s.last_work_tile = -1
+	var jobs: Array = s.jobs_for(kind, now0)
+	if not ap.start(s.tractor, jobs, float(vcfg["work_offset"]), ImplementData.width_of(impl), GameState.ROWS):
+		return {"started": false}
+	var length: float = ap.estimate_length(s.tractor)
+	var lanes: int = ap.lane_count
+	var t := 0.0
+	var dt := 1.0 / 60.0
+	while ap.active and t < 400.0:
+		var ctl: Vector2 = ap.update(s.tractor, dt)
+		VehicleModel.step(s.tractor, vcfg, ctl.x, ctl.y, dt)
+		if ap.working:
+			s.work_with_tractor(vcfg, now0 + t, "beans")
+		t += dt
+	return {"started": true, "time": t, "finished": ap.finished, "length": length, "lanes": lanes,
+		"fuel_used": fuel - float(s.tractor["fuel"])}
+
 func _count_state(s, st: String) -> int:
 	var n := 0
 	for tl in s.tiles:
@@ -835,6 +859,65 @@ func _init() -> void:
 	sv3["tiles"][0]["fertilized"] = true
 	var sv_clean = GameState.new()
 	_check(sv_clean.from_dict(sv3) == "" and not sv_clean.tiles[0]["fertilized"], "flag on bare ground is dropped")
+
+	# --- Autopilot lanes for wide implements ---
+	var ln_rows: Array = []
+	for ln_r in 8:
+		ln_rows.append({"row": ln_r, "c0": 0, "c1": 7})
+	_check(AutoPilotScript.plan_lanes(ln_rows, 1, 8).size() == 8, "1-wide: one lane per row")
+	var ln_3: Array = AutoPilotScript.plan_lanes(ln_rows, 3, 8)
+	_check(ln_3.size() == 3 and ln_3[0]["row"] == 1 and ln_3[1]["row"] == 4 and ln_3[2]["row"] == 7, "3-wide: 3 lanes on rows 1, 4, 7")
+	var ln_5: Array = AutoPilotScript.plan_lanes(ln_rows, 5, 8)
+	_check(ln_5.size() == 2 and ln_5[0]["row"] == 2 and ln_5[1]["row"] == 7, "5-wide: 2 lanes on rows 2, 7")
+	var ln_sparse: Array = AutoPilotScript.plan_lanes([{"row": 1, "c0": 2, "c1": 3}, {"row": 6, "c0": 0, "c1": 1}], 3, 8)
+	_check(ln_sparse.size() == 2 and ln_sparse[0]["row"] == 2 and ln_sparse[1]["row"] == 7, "far-apart rows get their own lanes")
+	var ln_union: Array = AutoPilotScript.plan_lanes([{"row": 0, "c0": 2, "c1": 3}, {"row": 1, "c0": 5, "c1": 7}], 3, 8)
+	_check(ln_union.size() == 1 and ln_union[0]["c0"] == 2 and ln_union[0]["c1"] == 7, "a lane runs over every column its rows need")
+	var ln_edge: Array = AutoPilotScript.plan_lanes([{"row": 7, "c0": 0, "c1": 7}], 5, 8)
+	_check(ln_edge.size() == 1 and ln_edge[0]["row"] == 7, "a lane stays inside the field")
+	_check(AutoPilotScript.plan_lanes([], 3, 8).is_empty(), "no jobs gives no lanes")
+	var ln_cover := true
+	for ln_w in [3, 5]:
+		var ln_h: int = (ln_w - 1) / 2
+		for ln_mask in range(1, 256):
+			var ln_j: Array = []
+			for ln_r in 8:
+				if ((ln_mask >> ln_r) & 1) == 1:
+					ln_j.append({"row": ln_r, "c0": 0, "c1": 7})
+			var ln_l: Array = AutoPilotScript.plan_lanes(ln_j, ln_w, 8)
+			for ln_x in ln_j:
+				var ln_hit := false
+				for ln_y in ln_l:
+					if absi(int(ln_y["row"]) - int(ln_x["row"])) <= ln_h:
+						ln_hit = true
+				if not ln_hit:
+					ln_cover = false
+	_check(ln_cover, "every row that needs work is inside a lane (all 255 row patterns)")
+	# Whole-field runs with wide implements
+	var ln_s1 = GameState.new()
+	var ln_a1: Dictionary = _auto_wide(ln_s1, "plough", t0)
+	_check(ln_a1["finished"] and _count_state(ln_s1, "ploughed") == 64, "1-wide autopilot ploughs the field")
+	var ln_s3 = GameState.new()
+	var ln_a3: Dictionary = _auto_wide(ln_s3, "plough_3", t0)
+	_check(ln_a3["finished"] and _count_state(ln_s3, "ploughed") == 64, "3-wide autopilot ploughs the whole field")
+	_check(ln_a3["lanes"] == 3, "3-wide autopilot drives 3 lanes")
+	_check(float(ln_a3["length"]) < float(ln_a1["length"]) * 0.6, "3-wide route is much shorter")
+	_check(float(ln_a3["fuel_used"]) < float(ln_a1["fuel_used"]) * 0.7, "3-wide autopilot burns much less fuel")
+	var ln_s5 = GameState.new()
+	var ln_a5: Dictionary = _auto_wide(ln_s5, "plough_5", t0)
+	_check(ln_a5["finished"] and _count_state(ln_s5, "ploughed") == 64 and ln_a5["lanes"] == 2, "5-wide autopilot ploughs in 2 lanes")
+	ln_s3.money = 5000
+	var ln_sd: Dictionary = _auto_wide(ln_s3, "seeder_3", t0)
+	_check(ln_sd["finished"] and _count_state(ln_s3, "growing") == 64, "3-wide seeder autopilot plants the field")
+	var ln_sf: Dictionary = _auto_wide(ln_s5, "spreader_3", t0)
+	_check(ln_sf["finished"], "spreader autopilot finishes")
+	var ln_ok := true
+	for ln_t in ln_s5.tiles:
+		if not ln_t["fertilized"]:
+			ln_ok = false
+	_check(ln_ok, "spreader autopilot fertilizes every tile")
+	var ln_hv: Dictionary = _auto_wide(ln_s3, "harvester_3", t0 + 1000.0)
+	_check(ln_hv["finished"] and _count_state(ln_s3, "stubble") == 64, "3-wide header autopilot harvests the field")
 
 	# --- Implement models: sized from the catalogue ---
 	var im_ids: Array = ImplementData.ITEMS.keys()
