@@ -274,13 +274,18 @@ func _toggle_auto() -> void:
 	auto_pass = 1
 	job_worked = 0
 	pass_worked = 0
-	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"])):
+	var width: int = ImplementData.width_of(state.tractor["implement"])
+	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"]), width, GameStateScript.ROWS):
 		return
 	hud.set_auto_active(true)
 	var note := "Autopilot on"
+	if width > 1:
+		note = "Autopilot on: %d lanes, %d tiles wide" % [autopilot.lane_count, width]
 	var need: float = autopilot.estimate_fuel(state.tractor, cfg)
 	if float(state.tractor["fuel"]) < need:
 		note = "Autopilot on - low fuel (need ~%d)" % int(ceil(need))
+	if float(cfg.get("speed_factor", 1.0)) < 0.8:
+		note += " - heavy load, top speed %.1f" % float(cfg["max_speed"])
 	if kind == "seeder":
 		var n: int = state.count_work(kind, now)
 		var cost: int = CropData.CROPS[seed_crop]["seed_cost"]
@@ -338,7 +343,8 @@ func _auto_ended() -> void:
 			auto_pass += 1
 			pass_worked = 0
 			state.last_work_tile = -1
-			if autopilot.start(state.tractor, jobs, float(cfg["work_offset"])):
+			if autopilot.start(state.tractor, jobs, float(cfg["work_offset"]),
+					ImplementData.width_of(state.tractor["implement"]), GameStateScript.ROWS):
 				hud.set_message("Autopilot: pass %d" % auto_pass)
 				return
 	hud.set_auto_active(false)
