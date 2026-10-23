@@ -33,6 +33,18 @@ jobs:
             'export/android/debug_keystore_pass = "android"' \
             > ~/.config/godot/editor_settings-4.tres
 
+      - name: Allow compressed textures for Android
+        run: |
+          # The 3D models (.glb) carry textures. Android export needs ETC2/ASTC import enabled.
+          if grep -q "import_etc2_astc" project.godot; then
+            sed -i 's|textures/vram_compression/import_etc2_astc=.*|textures/vram_compression/import_etc2_astc=true|' project.godot
+          elif grep -q '^\[rendering\]' project.godot; then
+            sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
+          else
+            printf '\n[rendering]\n\ntextures/vram_compression/import_etc2_astc=true\n' >> project.godot
+          fi
+          grep -n "etc2" project.godot
+
       - name: Import project
         run: godot --headless --import || true
 
@@ -52,7 +64,7 @@ jobs:
       - name: Syntax check scripts
         run: |
           fail=0
-          for f in farm_main farm_grid camera_rig hud game_state crop_data crop_stages environment_setup save_manager vehicle_data implement_data implement_models suspension vehicle_model tractor_view drive_controls farm_layout autopilot settings crop_models mesh_builder tile_models farm_scenery; do
+          for f in farm_main farm_grid camera_rig hud game_state crop_data crop_stages environment_setup save_manager vehicle_data implement_data implement_models suspension machine_models shop_catalog machinery_shop vehicle_model tractor_view drive_controls farm_layout autopilot settings crop_models mesh_builder tile_models farm_scenery; do
             echo "== $f"
             godot --headless --check-only --script res://scripts/$f.gd || { echo "SYNTAX FAIL: $f"; fail=1; }
           done
