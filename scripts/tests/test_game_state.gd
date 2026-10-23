@@ -24,6 +24,7 @@ const Suspension := preload("res://scripts/suspension.gd")
 const ShopCatalog := preload("res://scripts/shop_catalog.gd")
 const MachineModels := preload("res://scripts/machine_models.gd")
 const MachineryShop := preload("res://scripts/machinery_shop.gd")
+const TractorViewScript := preload("res://scripts/tractor_view.gd")
 
 var failures := 0
 
@@ -1040,6 +1041,42 @@ func _init() -> void:
 	sh_ui._on_use()
 	_check(sh_g.tractor["implement"] == "plough_3", "shop puts the tool on the tractor")
 	sh_ui.free()
+
+	# --- S7: real models in the field ---
+	var fv_n = MachineModels.instance_for("tractor")
+	if fv_n != null:
+		var fv_b: AABB = MachineModels.bounds_of(fv_n)
+		_check(fv_b.size.x > 0.5 and fv_b.size.y > 0.5 and fv_b.size.z > 1.0, "tractor model box has a size")
+		_check(fv_b.size.x < 4.0 and fv_b.size.z < 6.0, "tractor model box is game size")
+		fv_n.free()
+	var fv_empty := Node3D.new()
+	_check(MachineModels.bounds_of(fv_empty).size.x > 0.0, "empty node gets a default box")
+	fv_empty.free()
+	var fv_tv = TractorViewScript.new()
+	var fv_tr: Dictionary = {"x": 1.0, "z": 2.0, "heading": 0.5, "speed": 1.0, "implement": "plough_3", "vehicle": "tractor_light"}
+	fv_tv.update_from(fv_tr, 0.1)
+	fv_tv.update_from(fv_tr, 0.1)
+	var fv_has_tractor: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["tractor_light"]["model_path"])) != null
+	_check((fv_tv.glb_vehicle != null) == fv_has_tractor, "field tractor uses the real model when its file loads")
+	_check(fv_tv.cur_vehicle == "tractor_light", "field view remembers the vehicle")
+	_check(fv_tv.body_mi.visible == (fv_tv.glb_vehicle == null), "built-in body hides while the real tractor shows")
+	_check(fv_tv.wheels.size() == 4, "field tractor has four wheels to spin")
+	var fv_has_impl: bool = MachineModels.glb_scene(str(ImplementData.ITEMS["plough_3"]["model_path"])) != null
+	_check(fv_tv.glb_impl.has("plough_3") == fv_has_impl, "field implement uses the real model when its file loads")
+	if fv_tv.glb_impl.has("plough_3"):
+		_check(fv_tv.glb_impl["plough_3"].visible, "equipped real implement is visible")
+	fv_tr["implement"] = "none"
+	fv_tr["vehicle"] = "tractor_heavy"
+	fv_tv.update_from(fv_tr, 0.1)
+	_check(fv_tv.cur_vehicle == "tractor_heavy", "field view switches tractor")
+	_check(not fv_tv.glb_impl.has("plough_3") or not fv_tv.glb_impl["plough_3"].visible, "unequipped implement is hidden")
+	fv_tr["implement"] = "harvester"
+	fv_tv.update_from(fv_tr, 0.1)
+	_check(fv_tv.impl_nodes.has("harvester") and fv_tv.impl_nodes["harvester"].visible, "implement without a model file uses the built-in one")
+	fv_tr["vehicle"] = "bogus"
+	fv_tv.update_from(fv_tr, 0.1)
+	_check(fv_tv.glb_vehicle == null and fv_tv.body_mi.visible, "unknown vehicle falls back to the built-in tractor")
+	fv_tv.free()
 
 	# --- Implement models: sized from the catalogue ---
 	var im_ids: Array = ImplementData.ITEMS.keys()
