@@ -21,6 +21,9 @@ const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
 const ImplementModels := preload("res://scripts/implement_models.gd")
 const Suspension := preload("res://scripts/suspension.gd")
+const ShopCatalog := preload("res://scripts/shop_catalog.gd")
+const MachineModels := preload("res://scripts/machine_models.gd")
+const MachineryShop := preload("res://scripts/machinery_shop.gd")
 
 var failures := 0
 
@@ -301,12 +304,10 @@ func _init() -> void:
 
 	var cy = GameState.new()
 	var seq: Array = []
-	var cy_order: Array = VehicleData.IMPLEMENT_ORDER
-	for n in cy_order.size() + 1:
+	for n in 5:
 		cy.next_implement()
 		seq.append(cy.tractor["implement"])
-	_check(seq[0] == cy_order[1] and seq[cy_order.size() - 1] == cy_order[0], "tool cycles in order")
-	_check(seq[cy_order.size()] == cy_order[1], "tool cycle wraps around")
+	_check(seq == ["plough", "seeder", "harvester", "none", "plough"], "tools you start with cycle in order")
 
 	# --- Fuel ---
 	var r = GameState.new()
@@ -703,6 +704,7 @@ func _init() -> void:
 	_check(ImplementData.width_of("seeder_5") == 5 and ImplementData.width_of("none") == 1, "widths")
 	_check(ImplementData.weight_of("none") == 0.0 and ImplementData.weight_of("plough_5") == 1800.0, "weights")
 	var dr_save = GameState.new()
+	dr_save.owned.append("seeder_3")
 	dr_save.tractor["implement"] = "seeder_3"
 	var dr_back = GameState.new()
 	var dr_json = JSON.parse_string(JSON.stringify(dr_save.to_dict()))
@@ -727,7 +729,7 @@ func _init() -> void:
 	_check(dr_work.tiles[0]["state"] == "ploughed", "wide plough ploughs the tile")
 
 	# --- Wide work and fertilizer ---
-	_check(GameState.SCHEMA_VERSION == 3, "save format is version 3")
+	_check(GameState.SCHEMA_VERSION == 4, "save format is version 4")
 	var fw_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	var fw_sum := {}
 	var fw_cnt := {}
@@ -918,6 +920,126 @@ func _init() -> void:
 	_check(ln_ok, "spreader autopilot fertilizes every tile")
 	var ln_hv: Dictionary = _auto_wide(ln_s3, "harvester_3", t0 + 1000.0)
 	_check(ln_hv["finished"] and _count_state(ln_s3, "stubble") == 64, "3-wide header autopilot harvests the field")
+
+	# --- Machinery shop: owning, buying, using ---
+	var sh_s = GameState.new()
+	_check(sh_s.owned == ["tractor", "plough", "seeder", "harvester"], "start owning the tractor and 3 tools")
+	_check(sh_s.can_buy("plough_3") == "Not enough money", "cannot afford the wide plough")
+	_check(sh_s.buy("plough_3") == "Not enough money" and sh_s.money == 500, "failed buy keeps the money")
+	sh_s.money = 2000
+	_check(sh_s.buy("plough_3") == "" and sh_s.money == 500 and sh_s.owns("plough_3"), "buy the wide plough")
+	_check(sh_s.buy("plough_3") == "Already owned" and sh_s.money == 500, "cannot buy a machine twice")
+	_check(sh_s.buy("combine_small") == "Coming soon", "combines are not for sale yet")
+	_check(sh_s.buy("bogus") == "Unknown machine", "unknown machine cannot be bought")
+	sh_s.tractor["implement"] = "plough"
+	sh_s.next_implement()
+	_check(sh_s.tractor["implement"] == "plough_3", "a bought tool joins the tool cycle")
+	_check(sh_s.equip_implement("seeder_5") == "Not owned" and sh_s.tractor["implement"] == "plough_3", "cannot use a tool you do not own")
+	_check(sh_s.equip_implement("seeder") == "" and sh_s.tractor["implement"] == "seeder", "use an owned tool")
+	_check(sh_s.equip_implement("none") == "" and sh_s.tractor["implement"] == "none", "use no tool")
+	sh_s.money = 20000
+	_check(sh_s.select_vehicle("tractor_heavy") == "Not owned", "cannot drive a tractor you do not own")
+	_check(sh_s.buy("tractor_heavy") == "" and sh_s.money == 11000, "buy the heavy tractor")
+	sh_s.tractor["fuel"] = 5.0
+	_check(sh_s.select_vehicle("tractor_heavy") == "" and sh_s.tractor["vehicle"] == "tractor_heavy", "drive the heavy tractor")
+	_check(int(sh_s.vehicle_cfg()["power_hp"]) == 160 and float(sh_s.tractor["fuel"]) == 5.0, "heavy tractor settings, same fuel")
+	sh_s.money = 500
+	_check(sh_s.refuel() == "" and float(sh_s.tractor["fuel"]) == 40.0, "refuel fills the heavy tractor's bigger tank")
+	sh_s.money = 3000
+	_check(sh_s.buy("tractor_light") == "" and sh_s.select_vehicle("tractor_light") == "", "switch to the compact tractor")
+	_check(float(sh_s.tractor["fuel"]) == 12.0, "a smaller tank caps the fuel")
+	_check(sh_s.select_vehicle("combine_small") == "Not owned", "a combine cannot be driven yet")
+	var sh_json = JSON.parse_string(JSON.stringify(sh_s.to_dict()))
+	var sh_b = GameState.new()
+	_check(sh_b.from_dict(sh_json) == "", "save with bought machines loads")
+	_check(sh_b.owns("plough_3") and sh_b.owns("tractor_heavy") and sh_b.tractor["vehicle"] == "tractor_light", "owned machines and the chosen tractor survive")
+	var sh_v3: Dictionary = GameState.new().to_dict()
+	sh_v3["schema_version"] = 3
+	sh_v3.erase("owned")
+	sh_v3["tractor"].erase("vehicle")
+	sh_v3["tractor"]["implement"] = "plough_3"
+	var sh_m = GameState.new()
+	_check(sh_m.from_dict(sh_v3) == "", "version 3 save is accepted")
+	_check(sh_m.owns("plough_3") and sh_m.owns("tractor") and sh_m.tractor["vehicle"] == "tractor", "old save keeps its tool and gets the starter machines")
+	var sh_bad: Dictionary = GameState.new().to_dict()
+	sh_bad["owned"] = ["tractor", "ghost"]
+	_check(GameState.new().from_dict(sh_bad) != "", "rejects an unknown owned machine")
+	sh_bad = GameState.new().to_dict()
+	sh_bad["owned"] = "everything"
+	_check(GameState.new().from_dict(sh_bad) != "", "rejects a text owned list")
+	sh_bad = GameState.new().to_dict()
+	sh_bad["tractor"]["vehicle"] = "tractor_heavy"
+	_check(GameState.new().from_dict(sh_bad) != "", "rejects a tractor that is not owned")
+	sh_bad = GameState.new().to_dict()
+	sh_bad["tractor"]["implement"] = "plough_5"
+	_check(GameState.new().from_dict(sh_bad) != "", "rejects a tool that is not owned")
+	sh_bad = GameState.new().to_dict()
+	sh_bad["owned"].append("combine_small")
+	sh_bad["tractor"]["vehicle"] = "combine_small"
+	_check(GameState.new().from_dict(sh_bad) != "", "rejects a combine as the driven tractor")
+	# What the shop shows
+	var sh_all := {}
+	for sh_c in ShopCatalog.CATEGORIES:
+		var sh_ids: Array = ShopCatalog.ids_in(sh_c["id"])
+		_check(sh_ids.size() >= 1, "shop tab %s has machines" % sh_c["id"])
+		for sh_id in sh_ids:
+			sh_all[sh_id] = true
+	_check(sh_all.size() == VehicleData.VEHICLES.size() + ImplementData.ITEMS.size(), "every machine is in a shop tab")
+	var sh_gs = GameState.new()
+	var sh_e: Dictionary = ShopCatalog.entry("plough", sh_gs)
+	_check(sh_e["owned"] and not sh_e["in_use"] and sh_e["tag"] == "Owned", "owned machine entry")
+	sh_gs.tractor["implement"] = "plough"
+	_check(ShopCatalog.entry("plough", sh_gs)["tag"] == "In use", "machine in use entry")
+	var sh_p: Dictionary = ShopCatalog.entry("seeder_3", sh_gs)
+	_check(not sh_p["owned"] and sh_p["can_buy"] == "Not enough money" and sh_p["tag"] == "1700", "machine for sale entry")
+	_check(sh_p["stats"].contains("3 tiles wide") and sh_p["stats"].contains(" hp") and sh_p["stats"].contains("top speed"), "implement stats text")
+	_check(ShopCatalog.entry("tractor_heavy", sh_gs)["stats"].contains("160 hp"), "vehicle stats text")
+	_check(ShopCatalog.entry("spreader", sh_gs)["stats"].contains("fertilizer per tile"), "spreader stats mention fertilizer")
+	_check(ShopCatalog.entry("combine_large", sh_gs)["can_buy"] == "Coming soon", "combine entry says coming soon")
+	_check(ShopCatalog.entry("bogus", sh_gs)["name"] == "", "unknown id gives an empty entry")
+	# Preview models (the .glb files, or the built-in fallback)
+	_check(MachineModels.glb_scene("") == null and MachineModels.glb_scene("res://nope.glb") == null, "missing model file gives no scene")
+	_check(MachineModels.instance_for("bogus") == null, "unknown id has no preview")
+	for sh_mid in ImplementData.ITEMS:
+		var sh_n = MachineModels.instance_for(sh_mid)
+		_check(sh_n != null and sh_n is Node3D, "%s has a preview model" % sh_mid)
+		if sh_n != null:
+			sh_n.free()
+	for sh_vid in ["tractor", "tractor_light", "tractor_heavy"]:
+		var sh_t = MachineModels.instance_for(sh_vid)
+		_check(sh_t != null and sh_t is Node3D, "%s has a preview model" % sh_vid)
+		if sh_t != null:
+			sh_t.free()
+	var sh_cb = MachineModels.instance_for("combine_small")
+	var sh_has_file: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["combine_small"]["model_path"])) != null
+	_check((sh_cb != null) == sh_has_file, "a combine preview needs its model file")
+	if sh_cb != null:
+		sh_cb.free()
+	for sh_k in ImplementData.ITEMS:
+		var sh_it: Dictionary = ImplementData.ITEMS[sh_k]
+		var sh_path: String = str(sh_it["model_path"])
+		_check(float(sh_it["model_scale"]) > 0.0 and int(sh_it["model_gang"]) >= 1, "%s model scale and gang" % sh_k)
+		_check(sh_path == "" or (sh_path.begins_with("res://assets/models/") and sh_path.ends_with(".glb")), "%s model path" % sh_k)
+	for sh_k in VehicleData.VEHICLES:
+		var sh_vp: String = str(VehicleData.VEHICLES[sh_k]["model_path"])
+		_check(float(VehicleData.VEHICLES[sh_k]["model_scale"]) > 0.0, "%s model scale" % sh_k)
+		_check(sh_vp == "" or (sh_vp.begins_with("res://assets/models/") and sh_vp.ends_with(".glb")), "%s model path" % sh_k)
+	# The shop screen itself (built in code, driven here without a window)
+	var sh_ui = MachineryShop.new()
+	var sh_g = GameState.new()
+	sh_g.money = 2000
+	sh_ui.open(sh_g)
+	_check(sh_ui.list.item_count == ShopCatalog.ids_in("tractor").size(), "shop lists the tractors")
+	sh_ui._on_category("plough")
+	_check(sh_ui.list.item_count == 3 and sh_ui.selected == "plough", "shop switches category")
+	sh_ui._on_item(1)
+	_check(sh_ui.selected == "plough_3" and sh_ui.buy_button.visible and not sh_ui.buy_button.disabled, "wide plough can be bought")
+	sh_ui._on_buy()
+	_check(sh_g.owns("plough_3") and sh_g.money == 500, "shop buys the machine")
+	_check(sh_ui.use_button.visible and not sh_ui.buy_button.visible, "after buying, the shop offers Use")
+	sh_ui._on_use()
+	_check(sh_g.tractor["implement"] == "plough_3", "shop puts the tool on the tractor")
+	sh_ui.free()
 
 	# --- Implement models: sized from the catalogue ---
 	var im_ids: Array = ImplementData.ITEMS.keys()
