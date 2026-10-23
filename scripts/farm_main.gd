@@ -10,6 +10,7 @@ const SaveManager := preload("res://scripts/save_manager.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const VehicleModel := preload("res://scripts/vehicle_model.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
+const MachineryShopScript := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
@@ -35,6 +36,8 @@ var seed_crop := "maize"
 var dirty := false
 var save_timer := 0.0
 var empty_warned := false
+var shop                  # machinery shop screen (an overlay)
+var shop_button: Button
 var auto_pass := 0       # which autopilot pass we are on (max 3)
 var pass_worked := 0     # tiles worked in this pass
 var job_worked := 0      # tiles worked in the whole autopilot job
@@ -74,6 +77,26 @@ func _ready() -> void:
 
 	rig.tapped.connect(_on_tapped)
 	hud.action_pressed.connect(_on_action)
+
+	# Machinery shop: a "Shop" button and a full-screen overlay on their own layer.
+	var shop_layer := CanvasLayer.new()
+	shop_layer.layer = 20
+	add_child(shop_layer)
+	shop_button = Button.new()
+	shop_button.text = "Shop"
+	shop_button.add_theme_font_size_override("font_size", 26)
+	shop_button.anchor_left = 1.0
+	shop_button.anchor_right = 1.0
+	shop_button.offset_left = -190.0
+	shop_button.offset_right = -20.0
+	shop_button.offset_top = 112.0
+	shop_button.offset_bottom = 176.0
+	shop_button.pressed.connect(_open_shop)
+	shop_layer.add_child(shop_button)
+	shop = MachineryShopScript.new()
+	shop_layer.add_child(shop)
+	shop.changed.connect(_on_shop_changed)
+	shop.closed.connect(_on_shop_closed)
 
 	_refresh_all_tiles()
 	_update_drive_texts()
@@ -136,7 +159,35 @@ func _fertilized_note(t: Dictionary) -> String:
 
 # Vehicle settings with the current implement's weight applied (slower with heavy tools).
 func _refresh_cfg() -> void:
-	cfg = VehicleModel.loaded_config(VehicleData.VEHICLES["tractor"], state.tractor["implement"])
+	cfg = VehicleModel.loaded_config(state.vehicle_cfg(), state.tractor["implement"])
+
+# ---- Machinery shop ----
+func _open_shop() -> void:
+	if autopilot.active:
+		_stop_auto("")
+	if hud.has_method("hide"):
+		hud.hide()
+	rig.set_process_input(false)
+	rig.set_process_unhandled_input(false)
+	shop_button.hide()
+	shop.open(state)
+
+func _on_shop_closed() -> void:
+	if hud.has_method("show"):
+		hud.show()
+	rig.set_process_input(true)
+	rig.set_process_unhandled_input(true)
+	shop_button.show()
+	_update_drive_texts()
+	_update_ui()
+
+# A machine was bought or put to use: refresh the vehicle settings, texts and the save.
+func _on_shop_changed() -> void:
+	_refresh_cfg()
+	_update_drive_texts()
+	_update_ui()
+	tractor_view.update_from(state.tractor)
+	dirty = true
 
 func _update_drive_texts() -> void:
 	var tool_name: String = ImplementData.name_of(state.tractor["implement"])

@@ -11,7 +11,7 @@ const FarmLayout := preload("res://scripts/farm_layout.gd")
 const COLS := 8
 const ROWS := 8
 const START_MONEY := 500
-const SCHEMA_VERSION := 3
+const SCHEMA_VERSION := 4
 const RELIEF_AMOUNT := 100
 const STATES := ["unploughed", "ploughed", "growing", "stubble"]
 # After a harvest the land is left as stubble and must be ploughed again before replanting.
@@ -19,18 +19,22 @@ const HARVEST_LEAVES_STUBBLE := true
 # Distance between tile centres, used to find the tiles beside a wide implement.
 # farm_grid.gd uses the same spacing; a test checks they agree.
 const TILE_PITCH := 1.5
+# Machinery the player owns at the start: the farm tractor and the three original 1-tile tools.
+const STARTER_OWNED := ["tractor", "plough", "seeder", "harvester"]
 
 var money: int = START_MONEY
 var inventory: Dictionary = {}
 var tiles: Array = []
 var tractor: Dictionary = {}
 var last_work_tile := -1   # not saved: stops a tile being worked twice in one pass
+var owned: Array = []      # ids of owned vehicles and implements (see vehicle_data / implement_data)
 var fertilizer: int = 0    # units in stock (kept apart from crops so selling never touches it)
 var last_worked_tiles: Array = []   # not saved: tiles changed by the last work_with_tractor call
 var last_work_error := ""          # not saved: why part of a wide pass could not be done
 
 func _init() -> void:
 	tractor = default_tractor()
+	owned = STARTER_OWNED.duplicate()
 	for row in ROWS:
 		for col in COLS:
 			tiles.append({
@@ -155,12 +159,72 @@ static func default_tractor() -> Dictionary:
 		"fuel": VehicleData.VEHICLES["tractor"]["fuel_capacity"],
 		"hours": 0.0,
 		"implement": "none",
+		"vehicle": "tractor",   # id of the tractor being driven
 	}
 
+# Steps to the next tool the player owns (None is always available).
 func next_implement() -> void:
-	var order: Array = VehicleData.IMPLEMENT_ORDER
-	var idx := order.find(tractor["implement"])
-	tractor["implement"] = order[(idx + 1) % order.size()]
+	var avail: Array = []
+	for id in VehicleData.IMPLEMENT_ORDER:
+		if id == "none" or owned.has(id):
+			avail.append(id)
+	var idx := avail.find(tractor["implement"])
+	tractor["implement"] = avail[(idx + 1) % avail.size()] if idx >= 0 else "none"
+
+func owns(id: String) -> bool:
+	return owned.has(id)
+
+# Settings of the tractor being driven.
+func vehicle_cfg() -> Dictionary:
+	var cfg := VehicleData.get_vehicle(str(tractor.get("vehicle", "tractor")))
+	if cfg.is_empty():
+		return VehicleData.VEHICLES["tractor"]
+	return cfg
+
+# Price of a vehicle or implement id, or -1 if the id is unknown.
+func price_of(id: String) -> int:
+	if VehicleData.VEHICLES.has(id):
+		return int(VehicleData.VEHICLES[id]["price"])
+	if ImplementData.ITEMS.has(id):
+		return int(ImplementData.ITEMS[id]["price"])
+	return -1
+
+# "" if the machine can be bought now, otherwise the reason it cannot.
+func can_buy(id: String) -> String:
+	var price := price_of(id)
+	if price < 0:
+		return "Unknown machine"
+	if owns(id):
+		return "Already owned"
+	if VehicleData.VEHICLES.has(id) and VehicleData.VEHICLES[id]["type"] != "tractor":
+		return "Coming soon"
+	if money < price:
+		return "Not enough money"
+	return ""
+
+func buy(id: String) -> String:
+	var err := can_buy(id)
+	if err != "":
+		return err
+	money -= price_of(id)
+	owned.append(id)
+	return ""
+
+# Puts an owned implement on the tractor ("none" removes it).
+func equip_implement(id: String) -> String:
+	if id != "none" and (not ImplementData.ITEMS.has(id) or not owns(id)):
+		return "Not owned"
+	tractor["implement"] = id
+	return ""
+
+# Switches to an owned tractor. The tank keeps its fuel up to the new tank size.
+func select_vehicle(id: String) -> String:
+	var veh := VehicleData.get_vehicle(id)
+	if veh.is_empty() or veh["type"] != "tractor" or not owns(id):
+		return "Not owned"
+	tractor["vehicle"] = id
+	tractor["fuel"] = minf(float(tractor["fuel"]), float(veh["fuel_capacity"]))
+	return ""
 
 # Applies the tractor's tool to a tile. Returns "" if it did something,
 # "skip" if there was nothing to do (not an error), or an error message.
@@ -304,7 +368,7 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
 
 # Buys fuel up to a full tank, as much as the player can afford.
 func refuel() -> String:
-	var cfg: Dictionary = VehicleData.VEHICLES["tractor"]
+	var cfg: Dictionary = vehicle_cfg()
 	var needed := float(cfg["fuel_capacity"]) - float(tractor["fuel"])
 	if needed <= 0.01:
 		return "Tank is full"
@@ -334,6 +398,7 @@ func to_dict() -> Dictionary:
 		"money": money,
 		"inventory": inventory.duplicate(),
 		"fertilizer": fertilizer,
+		"owned": owned.duplicate(),
 		"tiles": out_tiles,
 		"tractor": tr,
 	}
@@ -349,6 +414,16 @@ func migrate(data: Dictionary) -> Dictionary:
 	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 2:
 		d["fertilizer"] = 0
 		d["schema_version"] = 3
+	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 3:
+		var own: Array = STARTER_OWNED.duplicate()
+		var tr3 = d.get("tractor")
+		if typeof(tr3) == TYPE_DICTIONARY:
+			var cur = tr3.get("implement", "none")
+			if typeof(cur) == TYPE_STRING and cur != "none" and not own.has(cur):
+				own.append(cur)
+			tr3["vehicle"] = "tractor"
+		d["owned"] = own
+		d["schema_version"] = 4
 	return d
 
 func _is_num(v: Variant) -> bool:
@@ -406,10 +481,24 @@ func from_dict(data: Dictionary) -> String:
 			"planted_at": float(planted),
 			"fertilized": fz,
 		})
+	var own_raw = d.get("owned")
+	if typeof(own_raw) != TYPE_ARRAY:
+		return "Bad machinery"
+	var own: Array = []
+	for o in own_raw:
+		if typeof(o) != TYPE_STRING or not (VehicleData.VEHICLES.has(o) or ImplementData.ITEMS.has(o)):
+			return "Bad machinery"
+		if not own.has(o):
+			own.append(o)
 	var tr = d.get("tractor")
 	if typeof(tr) != TYPE_DICTIONARY:
 		return "Bad tractor"
-	var cfg: Dictionary = VehicleData.VEHICLES["tractor"]
+	var veh = tr.get("vehicle", "tractor")
+	if typeof(veh) != TYPE_STRING or not VehicleData.VEHICLES.has(veh) or not own.has(veh):
+		return "Bad tractor"
+	if VehicleData.VEHICLES[veh]["type"] != "tractor":
+		return "Bad tractor"
+	var cfg: Dictionary = VehicleData.VEHICLES[veh]
 	for key in ["x", "z", "heading", "fuel", "hours"]:
 		if not _is_num(tr.get(key)) or not is_finite(float(tr[key])):
 			return "Bad tractor"
@@ -423,9 +512,12 @@ func from_dict(data: Dictionary) -> String:
 	var impl = tr.get("implement", "none")
 	if typeof(impl) != TYPE_STRING or not VehicleData.IMPLEMENT_ORDER.has(impl):
 		return "Bad tractor"
+	if impl != "none" and not own.has(impl):
+		return "Bad tractor"
 	money = int(d["money"])
 	inventory = inv
 	fertilizer = int(fert)
+	owned = own
 	tiles = new_tiles
 	tractor = {
 		"x": float(tr["x"]),
@@ -435,5 +527,6 @@ func from_dict(data: Dictionary) -> String:
 		"fuel": float(tr["fuel"]),
 		"hours": float(tr["hours"]),
 		"implement": impl,
+		"vehicle": veh,
 	}
 	return ""
