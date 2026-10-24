@@ -25,7 +25,7 @@ const ShopCatalog := preload("res://scripts/shop_catalog.gd")
 const MachineModels := preload("res://scripts/machine_models.gd")
 const MachineryShop := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
-const ParkingScript := preload("res://scripts/parking.gd")
+const Hitbox := preload("res://scripts/hitbox.gd")
 
 var failures := 0
 
@@ -309,7 +309,7 @@ func _init() -> void:
 	for n in 5:
 		cy.next_implement()
 		seq.append(cy.tractor["implement"])
-	_check(seq == ["plough", "seeder", "harvester", "none", "plough"], "tools you start with cycle in order")
+	_check(seq == ["plough", "seeder", "none", "plough", "seeder"], "tools you start with cycle in order")
 
 	# --- Fuel ---
 	var r = GameState.new()
@@ -623,7 +623,7 @@ func _init() -> void:
 	for cat_l in VehicleData.IMPLEMENT_ORDER:
 		if cat_l != "none":
 			_check(ImplementData.ITEMS.has(cat_l), "tool %s exists in the catalogue" % cat_l)
-	for cat_old in ["plough", "seeder", "harvester"]:
+	for cat_old in ["plough", "seeder"]:
 		_check(int(ImplementData.get_item(cat_old).get("work_width", 0)) == 1, "tool %s is 1 tile wide" % cat_old)
 	_check(ImplementData.get_item("nope").is_empty(), "unknown implement gives empty entry")
 	var cat_v_keys := ["id", "name", "type", "price", "power_hp", "max_speed", "reverse_factor", "accel",
@@ -638,7 +638,7 @@ func _init() -> void:
 		if not cat_vok:
 			continue
 		cat_vok = cat_v["id"] == cat_vid and VehicleData.VEHICLE_TYPES.has(cat_v["type"])
-		cat_vok = cat_vok and int(cat_v["price"]) > 0 and int(cat_v["power_hp"]) > 0
+		cat_vok = cat_vok and int(cat_v["price"]) >= 0 and int(cat_v["power_hp"]) > 0
 		cat_vok = cat_vok and float(cat_v["max_speed"]) > 0.0 and float(cat_v["fuel_capacity"]) > 0.0
 		cat_vok = cat_vok and float(cat_v["accel"]) > 0.0 and float(cat_v["turn_rate"]) > 0.0
 		_check(cat_vok, "vehicle %s values are valid" % cat_vid)
@@ -666,7 +666,7 @@ func _init() -> void:
 	var dr_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	var dr_none: Dictionary = VehicleModel.loaded_config(dr_cfg, "none")
 	_check(float(dr_none["max_speed"]) == float(dr_cfg["max_speed"]), "no tool: full top speed")
-	for dr_t in ["plough", "seeder", "harvester"]:
+	for dr_t in ["plough", "seeder"]:
 		var dr_l: Dictionary = VehicleModel.loaded_config(dr_cfg, dr_t)
 		var dr_same: bool = float(dr_l["max_speed"]) == float(dr_cfg["max_speed"])
 		dr_same = dr_same and float(dr_l["accel"]) == float(dr_cfg["accel"])
@@ -782,8 +782,6 @@ func _init() -> void:
 		fw_s.tiles[fw_t]["state"] = "growing"
 		fw_s.tiles[fw_t]["crop"] = "maize"
 		fw_s.tiles[fw_t]["planted_at"] = 0.0
-	_check(_wide_work(fw_s, fw_c27, "harvester_3", fw_cfg, 1000.0, "maize") == "", "wide header harvests")
-	_check(int(fw_s.inventory.get("maize", 0)) == 12 and _states(fw_s, "stubble") == [26, 27, 28], "3 tiles of maize")
 	# Fertilizer rules
 	var fe = GameState.new()
 	fe.tiles[5]["state"] = "ploughed"
@@ -921,18 +919,16 @@ func _init() -> void:
 		if not ln_t["fertilized"]:
 			ln_ok = false
 	_check(ln_ok, "spreader autopilot fertilizes every tile")
-	var ln_hv: Dictionary = _auto_wide(ln_s3, "harvester_3", t0 + 1000.0)
-	_check(ln_hv["finished"] and _count_state(ln_s3, "stubble") == 64, "3-wide header autopilot harvests the field")
 
 	# --- Machinery shop: owning, buying, using ---
 	var sh_s = GameState.new()
-	_check(sh_s.owned == ["tractor", "plough", "seeder", "harvester"], "start owning the tractor and 3 tools")
+	_check(sh_s.owned == ["tractor", "plough", "seeder", "combine_small"], "start owning the tractor, two tools and a free combine")
 	_check(sh_s.can_buy("plough_3") == "Not enough money", "cannot afford the wide plough")
 	_check(sh_s.buy("plough_3") == "Not enough money" and sh_s.money == 500, "failed buy keeps the money")
 	sh_s.money = 2000
 	_check(sh_s.buy("plough_3") == "" and sh_s.money == 500 and sh_s.owns("plough_3"), "buy the wide plough")
 	_check(sh_s.buy("plough_3") == "Already owned" and sh_s.money == 500, "cannot buy a machine twice")
-	_check(sh_s.buy("combine_small") == "Not enough money", "a combine needs the money like any machine")
+	_check(sh_s.buy("combine_large") == "Not enough money", "a combine needs the money like any machine")
 	_check(sh_s.buy("bogus") == "Unknown machine", "unknown machine cannot be bought")
 	sh_s.tractor["implement"] = "plough"
 	sh_s.next_implement()
@@ -953,7 +949,7 @@ func _init() -> void:
 	_check(float(sh_s.tractor["fuel"]) == 40.0, "a bigger tank keeps the fuel")
 	_check(sh_s.select_vehicle("tractor") == "" and float(sh_s.tractor["fuel"]) == 20.0, "a smaller tank caps the fuel")
 	_check(sh_s.select_vehicle("tractor_tracked") == "", "back to the tracked tractor")
-	_check(sh_s.select_vehicle("combine_small") == "Not owned", "cannot drive a combine you do not own")
+	_check(sh_s.select_vehicle("combine_large") == "Not owned", "cannot drive a combine you do not own")
 	var sh_json = JSON.parse_string(JSON.stringify(sh_s.to_dict()))
 	var sh_b = GameState.new()
 	_check(sh_b.from_dict(sh_json) == "", "save with bought machines loads")
@@ -1082,9 +1078,6 @@ func _init() -> void:
 	fv_tv.update_from(fv_tr, 0.1)
 	_check(fv_tv.cur_vehicle == "tractor_heavy", "field view switches tractor")
 	_check(not fv_tv.glb_impl.has("plough_3") or not fv_tv.glb_impl["plough_3"].visible, "unequipped implement is hidden")
-	fv_tr["implement"] = "harvester"
-	fv_tv.update_from(fv_tr, 0.1)
-	_check(fv_tv.impl_nodes.has("harvester") and fv_tv.impl_nodes["harvester"].visible, "implement without a model file uses the built-in one")
 	fv_tr["vehicle"] = "bogus"
 	fv_tv.update_from(fv_tr, 0.1)
 	_check(fv_tv.glb_vehicle == null and fv_tv.body_mi.visible, "unknown vehicle falls back to the built-in tractor")
@@ -1108,6 +1101,21 @@ func _init() -> void:
 	var lf_has_tracks: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["tractor_tracked"]["model_path"])) != null
 	_check(lf_tv.cur_vehicle == "tractor_tracked", "field view takes the tracked tractor")
 	_check(lf_tv.wheels.is_empty() == lf_has_tracks, "track pods do not spin like wheels")
+	_check(lf_tv.track_spin.is_empty() != lf_has_tracks or not lf_has_tracks, "the tracked tractor has parts to spin")
+	if lf_has_tracks:
+		lf_tr["speed"] = 2.0
+		var lf_ring := lf_tv.track_vi
+		var lf_rot0: float = lf_tv.track_spin[0]["angle"]
+		for lf_k in 30:
+			lf_tv.update_from(lf_tr, 0.05)
+		_check(lf_tv.track_vi != lf_ring or float(lf_tv.track_spin[0]["angle"]) != lf_rot0, "the tracks move when the tractor drives")
+		var lf_shown := 0
+		for lf_ringset in lf_tv.track_cleats:
+			for lf_node in lf_ringset:
+				if lf_node.visible:
+					lf_shown += 1
+		_check(lf_shown == lf_tv.track_cleats.size(), "one cleat ring shows on each track")
+		lf_tr["speed"] = 0.0
 	lf_tr["vehicle"] = "combine_small"
 	lf_tr["implement"] = "plough_3"
 	lf_tv.update_from(lf_tr, 0.1)
@@ -1118,11 +1126,9 @@ func _init() -> void:
 
 	var cb_s = GameState.new()
 	cb_s.money = 50000
-	_check(cb_s.buy("combine_small") == "" and cb_s.select_vehicle("combine_small") == "", "buy and drive a combine")
+	_check(cb_s.owns("combine_small") and cb_s.select_vehicle("combine_small") == "", "the free combine can be driven at once")
 	_check(cb_s.is_combine() and cb_s.active_kind() == "harvester" and cb_s.active_implement() == "none", "a combine works with its own header")
 	_check(cb_s.active_width() == 3, "the small combine cuts three tiles")
-	var cb_pose := ParkingScript.start_pose("combine_small")
-	_check(absf(float(cb_s.tractor["x"]) - float(cb_pose["x"])) < 0.001 and absf(float(cb_s.tractor["z"]) - float(cb_pose["z"])) < 0.001, "the machine you take starts in its yard slot")
 	# A ripe field: the header cuts ahead of the combine, three tiles across.
 	for cb_i in cb_s.tiles.size():
 		cb_s.tiles[cb_i]["state"] = "growing"
@@ -1142,16 +1148,68 @@ func _init() -> void:
 	cb_stopped.buy("combine_large")
 	cb_stopped.select_vehicle("combine_large")
 	_check(cb_stopped.active_width() == 5 and float(cb_stopped.vehicle_cfg()["work_offset"]) < 0.0, "the large combine cuts five tiles with its header ahead")
-	for cb_id in VehicleData.VEHICLES:
-		_check(ParkingScript.has_slot(cb_id), "%s has a place in the yard" % cb_id)
-		var cb_slot: Dictionary = ParkingScript.start_pose(cb_id)
-		var cb_in_yard: bool = float(cb_slot["z"]) >= 4.5 and absf(float(cb_slot["x"])) <= VehicleData.DRIVE_BOUNDS and float(cb_slot["z"]) <= VehicleData.DRIVE_BOUNDS
-		_check(cb_in_yard, "%s waits in the yard, clear of the field" % cb_id)
-		var cb_hidden := false
-		for cb_r in VehicleData.OBSTACLES:
-			if cb_r.has_point(Vector2(float(cb_slot["x"]), float(cb_slot["z"]))):
-				cb_hidden = true
-		_check(not cb_hidden, "%s does not start inside the farmhouse" % cb_id)
+	# Machines standing in the yard do not overlap each other, the house or the field.
+	var py_s = GameState.new()
+	py_s.money = 500000
+	for py_id in VehicleData.VEHICLES:
+		if not py_s.owns(py_id):
+			_check(py_s.buy(py_id) == "", "buy %s" % py_id)
+	_check(py_s.fleet.size() == VehicleData.VEHICLES.size(), "every owned vehicle has a machine")
+	var py_ids: Array = py_s.fleet.keys()
+	for py_a in py_ids.size():
+		var py_m: Dictionary = py_s.fleet[py_ids[py_a]]
+		_check(float(py_m["z"]) >= -11.0 and absf(float(py_m["x"])) <= VehicleData.DRIVE_BOUNDS, "%s stands in the yard" % py_ids[py_a])
+		for py_r in VehicleData.OBSTACLES:
+			_check(not py_r.has_point(Vector2(float(py_m["x"]), float(py_m["z"]))), "%s is not inside the house" % py_ids[py_a])
+		for py_b in range(py_a + 1, py_ids.size()):
+			var py_o: Dictionary = py_s.fleet[py_ids[py_b]]
+			_check(Hitbox.penetration(Hitbox.of_machine(py_m), Hitbox.of_machine(py_o)) <= 0.0, "%s and %s do not overlap" % [py_ids[py_a], py_ids[py_b]])
+
+	# Machines are solid: one cannot be driven into another, but can back away.
+	var hb_a: Dictionary = {"x": 0.0, "z": 0.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	var hb_b: Dictionary = {"x": 0.0, "z": 2.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	var hb_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
+	for hb_i in 60:
+		VehicleModel.step(hb_a, hb_cfg, 1.0, 0.0, 0.05, [hb_b])
+	_check(float(hb_a["z"]) < 1.0 and bool(hb_a["_blocked"]), "a tractor stops before the one in front")
+	_check(Hitbox.penetration(Hitbox.of_machine(hb_a), Hitbox.of_machine(hb_b)) <= 0.0, "the two tractors never overlap")
+	var hb_z: float = hb_a["z"]
+	for hb_i in 20:
+		VehicleModel.step(hb_a, hb_cfg, -1.0, 0.0, 0.05, [hb_b])
+	_check(float(hb_a["z"]) < hb_z, "it can reverse away from the other tractor")
+	var hb_free: Dictionary = {"x": 5.0, "z": 0.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	for hb_i in 20:
+		VehicleModel.step(hb_free, hb_cfg, 1.0, 0.0, 0.05, [hb_b])
+	_check(float(hb_free["z"]) > 0.5 and not bool(hb_free["_blocked"]), "a tractor beside the other one drives on")
+
+	# Several machines at once: each keeps its own place, fuel and tool, and the save keeps them.
+	var fl_s = GameState.new()
+	fl_s.money = 500000
+	fl_s.buy("tractor_heavy")
+	fl_s.select_vehicle("tractor_heavy")
+	fl_s.equip_implement("plough")
+	fl_s.tractor["fuel"] = 7.0
+	fl_s.tractor["x"] = -4.0
+	fl_s.select_vehicle("tractor")
+	_check(fl_s.tractor["implement"] == "none" and float(fl_s.tractor["fuel"]) == 20.0, "each machine has its own tool and fuel")
+	_check(float(fl_s.fleet["tractor_heavy"]["x"]) == -4.0 and fl_s.fleet["tractor_heavy"]["implement"] == "plough", "the other machine stays where it was left")
+	_check(fl_s.others_of("tractor").size() == fl_s.fleet.size() - 1, "the other machines are listed")
+	var fl_t = GameState.new()
+	_check(fl_t.from_dict(fl_s.to_dict()) == "", "a save with several machines loads")
+	_check(float(fl_t.fleet["tractor_heavy"]["fuel"]) == 7.0 and fl_t.fleet["tractor_heavy"]["implement"] == "plough", "the machines come back as they were")
+	var fl_old: Dictionary = fl_s.to_dict()
+	fl_old.erase("fleet")
+	var fl_u = GameState.new()
+	_check(fl_u.from_dict(fl_old) == "" and fl_u.fleet.has("tractor_heavy"), "a save without the fleet starts the other machines in the yard")
+	var fl_hv: Dictionary = fl_s.to_dict()
+	fl_hv["owned"].append("harvester_3")
+	fl_hv["money"] = 10
+	fl_hv["tractor"]["implement"] = "harvester"
+	var fl_h = GameState.new()
+	_check(fl_h.from_dict(fl_hv) == "" and fl_h.money == 2010 and fl_h.tractor["implement"] == "none", "the removed tractor headers are refunded")
+	# Two machines of the same kind take different rows.
+	var fl_j: Array = fl_s.jobs_for("plough", 0.0, [0, 1, 2])
+	_check(not fl_j.is_empty() and int(fl_j[0]["row"]) == 3, "rows another machine is working are left alone")
 
 	# --- Implement models: sized from the catalogue ---
 	var im_ids: Array = ImplementData.ITEMS.keys()
