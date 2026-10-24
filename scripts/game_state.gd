@@ -21,15 +21,24 @@ const HARVEST_LEAVES_STUBBLE := true
 # farm_grid.gd uses the same spacing; a test checks they agree.
 const TILE_PITCH := 1.5
 # Machinery the player owns at the start: the farm tractor and the three original 1-tile tools.
-const STARTER_OWNED := ["tractor", "plough", "seeder", "harvester"]
+const STARTER_OWNED := ["tractor", "plough", "seeder", "combine_small"]
 # Vehicles taken out of the game, with the price refunded when an old save still owns one.
 const REMOVED_VEHICLES := {"tractor_light": 1800}
+# Tractor-mounted headers were replaced by combines; an old save is refunded for them.
+const REMOVED_IMPLEMENTS := {"harvester": 0, "harvester_3": 2000}
+const Hitbox := preload("res://scripts/hitbox.gd")
 
 var money: int = START_MONEY
 var inventory: Dictionary = {}
 var tiles: Array = []
-var tractor: Dictionary = {}
-var last_work_tile := -1   # not saved: stops a tile being worked twice in one pass
+var tractor: Dictionary = {}      # the machine being driven: always the same dictionary as fleet[its id]
+var fleet: Dictionary = {}        # vehicle id -> machine {x, z, heading, speed, fuel, hours, implement, vehicle}
+# Not saved: stops a tile being worked twice in one pass (kept per machine).
+var last_work_tile: int:
+	get:
+		return int(tractor.get("_lwt", -1))
+	set(value):
+		tractor["_lwt"] = value
 var owned: Array = []      # ids of owned vehicles and implements (see vehicle_data / implement_data)
 var fertilizer: int = 0    # units in stock (kept apart from crops so selling never touches it)
 var last_worked_tiles: Array = []   # not saved: tiles changed by the last work_with_tractor call
@@ -37,7 +46,9 @@ var last_work_error := ""          # not saved: why part of a wide pass could no
 
 func _init() -> void:
 	tractor = default_tractor()
+	fleet = {"tractor": tractor}
 	owned = STARTER_OWNED.duplicate()
+	_sync_fleet()
 	for row in ROWS:
 		for col in COLS:
 			tiles.append({
@@ -165,6 +176,52 @@ static func default_tractor() -> Dictionary:
 		"vehicle": "tractor",   # id of the tractor being driven
 	}
 
+# A new machine standing in the yard by the farmhouse, full tank, no tool.
+func default_machine(id: String) -> Dictionary:
+	var veh := VehicleData.get_vehicle(id)
+	var others: Array = []
+	for k in fleet:
+		others.append(fleet[k])
+	var spot := Parking.find_spot(id, others)
+	if spot.is_empty():
+		spot = {"x": 0.0, "z": 4.4, "heading": PI}
+	return {
+		"x": float(spot["x"]),
+		"z": float(spot["z"]),
+		"heading": float(spot["heading"]),
+		"speed": 0.0,
+		"fuel": float(veh.get("fuel_capacity", 20.0)),
+		"hours": 0.0,
+		"implement": "none",
+		"vehicle": id,
+	}
+
+# Every owned vehicle has a machine in the field; machines of vehicles no longer owned go.
+func _sync_fleet() -> void:
+	for id in owned:
+		if VehicleData.VEHICLES.has(id) and not fleet.has(id):
+			fleet[id] = default_machine(str(id))
+	var driven := str(tractor.get("vehicle", "tractor"))
+	for k in fleet.keys():
+		if not owned.has(k) and str(k) != driven:
+			fleet.erase(k)
+
+# Owned vehicle ids in the order the quick-switch buttons step through them.
+func machine_ids() -> Array:
+	var out: Array = []
+	for id in owned:
+		if VehicleData.VEHICLES.has(id) and fleet.has(id):
+			out.append(str(id))
+	return out
+
+# The machines other than the one with this vehicle id (they are solid for it).
+func others_of(id: String) -> Array:
+	var out: Array = []
+	for k in fleet:
+		if k != id:
+			out.append(fleet[k])
+	return out
+
 # Steps to the next tool the player owns (None is always available).
 func next_implement() -> void:
 	var avail: Array = []
@@ -209,6 +266,7 @@ func buy(id: String) -> String:
 		return err
 	money -= price_of(id)
 	owned.append(id)
+	_sync_fleet()
 	return ""
 
 # Puts an owned implement on the tractor ("none" removes it).
@@ -218,25 +276,39 @@ func equip_implement(id: String) -> String:
 	tractor["implement"] = id
 	return ""
 
-# Switches to an owned tractor or combine. The tank keeps its fuel up to the new tank size.
-# The machine you take is the one waiting in the yard by the house, so it starts there,
-# facing the field.
+# Takes the wheel of an owned tractor or combine. Every machine keeps its own place, fuel
+# and tool, so this just changes which one you drive; the others carry on where they are.
 func select_vehicle(id: String) -> String:
 	var veh := VehicleData.get_vehicle(id)
 	if veh.is_empty() or not VehicleData.VEHICLE_TYPES.has(veh["type"]) or not owns(id):
 		return "Not owned"
-	var changed := str(tractor.get("vehicle", "tractor")) != id
-	tractor["vehicle"] = id
-	tractor["fuel"] = minf(float(tractor["fuel"]), float(veh["fuel_capacity"]))
-	if changed:
-		var pose := Parking.start_pose(id)
-		if not pose.is_empty():
-			tractor["x"] = pose["x"]
-			tractor["z"] = pose["z"]
-			tractor["heading"] = pose["heading"]
-			tractor["speed"] = 0.0
-		last_work_tile = -1
+	_sync_fleet()
+	tractor = fleet[id]
 	return ""
+
+# Settings of any machine in the fleet.
+func cfg_of(m: Dictionary) -> Dictionary:
+	var cfg := VehicleData.get_vehicle(str(m.get("vehicle", "tractor")))
+	if cfg.is_empty():
+		return VehicleData.VEHICLES["tractor"]
+	return cfg
+
+func machine_is_combine(m: Dictionary) -> bool:
+	return str(cfg_of(m).get("type", "tractor")) == "harvester"
+
+# The tool a machine works with: a combine always uses its built-in header.
+func machine_implement(m: Dictionary) -> String:
+	return "none" if machine_is_combine(m) else str(m["implement"])
+
+func machine_kind(m: Dictionary) -> String:
+	if machine_is_combine(m):
+		return "harvester"
+	return ImplementData.type_of(str(m["implement"]))
+
+func machine_width(m: Dictionary) -> int:
+	if machine_is_combine(m):
+		return maxi(1, int(cfg_of(m).get("work_width", 1)))
+	return ImplementData.width_of(str(m["implement"]))
 
 # True while a combine is being driven: it has its own header, so the tool button is not used.
 func is_combine() -> bool:
@@ -333,9 +405,11 @@ func count_work(kind: String, now: float) -> int:
 	return n
 
 # One job per row that needs work: {"row", "c0", "c1"} (first and last column to visit).
-func jobs_for(kind: String, now: float) -> Array:
+func jobs_for(kind: String, now: float, skip_rows: Array = []) -> Array:
 	var jobs: Array = []
 	for row in ROWS:
+		if skip_rows.has(row):
+			continue
 		var c0 := -1
 		var c1 := -1
 		for col in COLS:
@@ -353,25 +427,26 @@ func jobs_for(kind: String, now: float) -> Array:
 # error message if nothing could be done. When part of a wide pass fails (for example
 # the money ran out) the rest is still done and `last_work_error` says why.
 # After "", `last_worked_tiles` lists every tile that changed.
-func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
+func work_with_tractor(cfg: Dictionary, now: float, crop_id: String, machine: Dictionary = {}) -> String:
 	last_worked_tiles = []
 	last_work_error = ""
+	var m: Dictionary = tractor if machine.is_empty() else machine
 	var comb := str(cfg.get("type", "tractor")) == "harvester"
-	var impl_id: String = tractor["implement"]
-	if absf(float(tractor["speed"])) < 0.1 or (not comb and impl_id == "none"):
+	var impl_id: String = m["implement"]
+	if absf(float(m["speed"])) < 0.1 or (not comb and impl_id == "none"):
 		return "skip"
 	# Positive offset: the tool trails behind. Negative: a combine header cuts ahead.
 	var off: float = cfg["work_offset"]
-	var h: float = tractor["heading"]
-	var cx := float(tractor["x"]) - sin(h) * off
-	var cz := float(tractor["z"]) - cos(h) * off
+	var h: float = m["heading"]
+	var cx := float(m["x"]) - sin(h) * off
+	var cz := float(m["z"]) - cos(h) * off
 	var idx := FarmLayout.world_to_tile(cx, cz)
 	if idx < 0:
-		last_work_tile = -1
+		m["_lwt"] = -1
 		return "skip"
-	if idx == last_work_tile:
+	if idx == int(m.get("_lwt", -1)):
 		return "skip"
-	last_work_tile = idx
+	m["_lwt"] = idx
 	var width: int = maxi(1, int(cfg.get("work_width", 1))) if comb else ImplementData.width_of(impl_id)
 	var targets: Array = [idx]
 	var half := int((width - 1) / 2)
@@ -425,8 +500,10 @@ func to_dict() -> Dictionary:
 			"planted_at": t["planted_at"],
 			"fertilized": t.get("fertilized", false),
 		})
-	var tr := tractor.duplicate()
-	tr.erase("speed")
+	var tr := _saved_machine(tractor)
+	var out_fleet := {}
+	for k in fleet:
+		out_fleet[k] = _saved_machine(fleet[k])
 	return {
 		"schema_version": SCHEMA_VERSION,
 		"money": money,
@@ -435,7 +512,16 @@ func to_dict() -> Dictionary:
 		"owned": owned.duplicate(),
 		"tiles": out_tiles,
 		"tractor": tr,
+		"fleet": out_fleet,
 	}
+
+# A machine as saved: no speed and none of the working keys that start with "_".
+func _saved_machine(m: Dictionary) -> Dictionary:
+	var out := {}
+	for k in m:
+		if not str(k).begins_with("_") and k != "speed":
+			out[k] = m[k]
+	return out
 
 # Upgrades older save versions to the current one before validation.
 func migrate(data: Dictionary) -> Dictionary:
@@ -524,10 +610,15 @@ func from_dict(data: Dictionary) -> String:
 		if typeof(o) == TYPE_STRING and REMOVED_VEHICLES.has(o):
 			refund += int(REMOVED_VEHICLES[o])
 			continue
+		if typeof(o) == TYPE_STRING and REMOVED_IMPLEMENTS.has(o):
+			refund += int(REMOVED_IMPLEMENTS[o])
+			continue
 		if typeof(o) != TYPE_STRING or not (VehicleData.VEHICLES.has(o) or ImplementData.ITEMS.has(o)):
 			return "Bad machinery"
 		if not own.has(o):
 			own.append(o)
+	if not own.has("combine_small"):
+		own.append("combine_small")     # the free starter combine, for saves made before combines
 	var tr = d.get("tractor")
 	if typeof(tr) != TYPE_DICTIONARY:
 		return "Bad tractor"
@@ -550,6 +641,8 @@ func from_dict(data: Dictionary) -> String:
 	if float(tr["hours"]) < 0.0:
 		return "Bad tractor"
 	var impl = tr.get("implement", "none")
+	if typeof(impl) == TYPE_STRING and REMOVED_IMPLEMENTS.has(impl):
+		impl = "none"
 	if typeof(impl) != TYPE_STRING or not VehicleData.IMPLEMENT_ORDER.has(impl):
 		return "Bad tractor"
 	if impl != "none" and not own.has(impl):
@@ -569,4 +662,48 @@ func from_dict(data: Dictionary) -> String:
 		"implement": impl,
 		"vehicle": veh,
 	}
+	# The other machines: each keeps its own place, fuel and tool. A damaged entry is dropped
+	# and the machine starts again in the yard.
+	var new_fleet := {str(veh): tractor}
+	var fl = d.get("fleet")
+	if typeof(fl) == TYPE_DICTIONARY:
+		for k in fl:
+			if str(k) == str(veh) or not (typeof(k) == TYPE_STRING and VehicleData.VEHICLES.has(k)):
+				continue
+			var pm := _parse_machine(str(k), fl[k], own)
+			if not pm.is_empty():
+				new_fleet[str(k)] = pm
+	fleet = new_fleet
+	_sync_fleet()
 	return ""
+
+# One saved machine, checked; an empty dictionary if anything is wrong with it.
+func _parse_machine(id: String, raw: Variant, own: Array) -> Dictionary:
+	if typeof(raw) != TYPE_DICTIONARY or not own.has(id) or not VehicleData.VEHICLES.has(id):
+		return {}
+	var cfg: Dictionary = VehicleData.VEHICLES[id]
+	for key in ["x", "z", "heading", "fuel", "hours"]:
+		if not _is_num(raw.get(key)) or not is_finite(float(raw[key])):
+			return {}
+	var bnd: float = VehicleData.DRIVE_BOUNDS + 0.01
+	if absf(float(raw["x"])) > bnd or absf(float(raw["z"])) > bnd:
+		return {}
+	if float(raw["fuel"]) < 0.0 or float(raw["fuel"]) > float(cfg["fuel_capacity"]) + 0.01 or float(raw["hours"]) < 0.0:
+		return {}
+	var impl = raw.get("implement", "none")
+	if typeof(impl) == TYPE_STRING and REMOVED_IMPLEMENTS.has(impl):
+		impl = "none"
+	if typeof(impl) != TYPE_STRING or not VehicleData.IMPLEMENT_ORDER.has(impl):
+		impl = "none"
+	if impl != "none" and not own.has(impl):
+		impl = "none"
+	return {
+		"x": float(raw["x"]),
+		"z": float(raw["z"]),
+		"heading": float(raw["heading"]),
+		"speed": 0.0,
+		"fuel": float(raw["fuel"]),
+		"hours": float(raw["hours"]),
+		"implement": impl,
+		"vehicle": id,
+	}
