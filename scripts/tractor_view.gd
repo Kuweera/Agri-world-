@@ -175,6 +175,16 @@ func _ensure_implement(id: String) -> void:
 	if not impl_nodes.has(id):
 		impl_nodes[id] = _mesh_node(attach, ImplementModels.build(id))
 
+# Where a node sits in the model's own space, through any parent nodes (articulated tractors).
+func _pos_in_root(root: Node3D, n: Node3D) -> Vector3:
+	var p := Vector3.ZERO
+	var cur: Node = n
+	while cur != null and cur != root:
+		if cur is Node3D:
+			p = (cur as Node3D).transform * p
+		cur = cur.get_parent()
+	return p
+
 # Shows the real tractor model for a catalogue vehicle id when its .glb loads, otherwise the
 # built-in tractor. The real model's middle is put on the tractor position, so work stays put.
 func _apply_vehicle(vid: String) -> void:
@@ -204,7 +214,7 @@ func _apply_vehicle(vid: String) -> void:
 	glb_vehicle = inst
 	var hitch = inst.find_child("Hitch_Rear", true, false)
 	if hitch is Node3D:
-		var hp: Vector3 = (hitch as Node3D).position
+		var hp: Vector3 = _pos_in_root(inst, hitch as Node3D)
 		attach.position = Vector3(-hp.x * sc, hp.y * sc, -hp.z * sc + inst.position.z)
 	var real_wheels: Array = []
 	for nm in ["Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR"]:
