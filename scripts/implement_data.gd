@@ -1,15 +1,16 @@
 extends RefCounted
-# Implement catalogue: ploughs, seeders, fertilizer spreaders and tractor harvesters.
+# Implement catalogue: ploughs, seeders and fertilizer spreaders. (Harvesting is done by the
+# combines in vehicle_data.gd, which have their own header.)
 # Every entry has the same fields. "id" must match the key.
-# type: "plough", "seeder", "fertilizer" or "harvester".
+# type: "plough", "seeder" or "fertilizer".
 # work_width: how many tiles wide it works, always an odd number (centre tile plus equal sides).
 # weight: kilograms. Heavy implements need more engine power (used by the drag logic).
 # model_path: "" means it is built in code; otherwise a res:// .glb (the game falls back to the
 # built-in model if the file is missing). model_scale shrinks the real-size (metres) model to
 # game size. model_gang: how many copies stand side by side (one per tile of width).
-# The ids "plough", "seeder" and "harvester" are the original 1-tile tools; saves use them.
+# The ids "plough" and "seeder" are the original 1-tile tools; saves use them.
 
-const TYPES := ["plough", "seeder", "fertilizer", "harvester"]
+const TYPES := ["plough", "seeder", "fertilizer"]
 
 const ITEMS := {
 	"plough": {
@@ -59,16 +60,6 @@ const ITEMS := {
 		"price": 3500, "work_width": 5, "weight": 1600,
 		"fert_per_tile": 1,
 		"model_path": "res://assets/models/Spreader.glb", "model_scale": 0.7, "model_gang": 5, "paint": Color(0.15, 0.4, 0.7),
-	},
-	"harvester": {
-		"id": "harvester", "name": "Harvester", "type": "harvester",
-		"price": 500, "work_width": 1, "weight": 400,
-		"model_path": "", "model_scale": 0.5, "model_gang": 1, "paint": Color(0.9, 0.75, 0.15),
-	},
-	"harvester_3": {
-		"id": "harvester_3", "name": "Wide Header", "type": "harvester",
-		"price": 2000, "work_width": 3, "weight": 1100,
-		"model_path": "", "model_scale": 0.5, "model_gang": 1, "paint": Color(0.9, 0.75, 0.15),
 	},
 }
 

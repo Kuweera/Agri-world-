@@ -22,6 +22,7 @@ const CORRIDOR_Z := 3.6    # free strip between the field and the farmhouse
 const YARD_Z := 3.7        # tractor further south than this is in the yard
 const PIVOT_RATE := 2.0    # radians per second
 const ARRIVE := 0.08
+const BLOCK_WAIT := 8.0   # seconds to wait for another machine to move before giving up
 
 var active := false
 var working := false
@@ -32,6 +33,12 @@ var idx := 0
 var aligned := false
 var stuck_time := 0.0
 var lane_count := 0      # lanes in the current plan
+var holding := false     # set by the game while another machine is in the way: wait longer
+var kind := ""           # what this autopilot does: "plough", "seeder", "fertilizer", "harvester"
+var reserved_rows: Array = []   # field rows its lanes cover, so another machine takes other rows
+var pass_no := 0         # which pass of the job (the game allows 3)
+var pass_worked := 0     # tiles worked in this pass
+var job_worked := 0      # tiles worked in the whole job
 
 func _add(x: float, z: float, work: bool) -> void:
 	wps.append({"x": x, "z": z, "work": work})
@@ -75,6 +82,12 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 		return false
 	var list: Array = plan_lanes(jobs, width, rows)
 	lane_count = list.size()
+	reserved_rows = []
+	var half_w := int((width - 1) / 2)
+	for lane in list:
+		for r in range(int(lane["row"]) - half_w, int(lane["row"]) + half_w + 1):
+			if r >= 0 and r < rows and not reserved_rows.has(r):
+				reserved_rows.append(r)
 	var tx := float(tr["x"])
 	var tz := float(tr["z"])
 
@@ -147,6 +160,7 @@ func estimate_fuel(tr: Dictionary, cfg: Dictionary) -> float:
 func stop(reason: String) -> void:
 	active = false
 	working = false
+	reserved_rows = []
 	message = reason
 
 # Returns Vector2(throttle, steer).
@@ -176,6 +190,7 @@ func update(tr: Dictionary, dt: float) -> Vector2:
 		if idx >= wps.size():
 			active = false
 			finished = true
+			reserved_rows = []
 			message = "Done"
 		return Vector2.ZERO
 
@@ -198,7 +213,7 @@ func update(tr: Dictionary, dt: float) -> Vector2:
 		stuck_time += dt
 	else:
 		stuck_time = 0.0
-	if stuck_time > 1.5:
+	if stuck_time > (BLOCK_WAIT if holding else 1.5):
 		stop("Autopilot blocked")
 		return Vector2.ZERO
 	return Vector2(clampf(length / 2.0, 0.25, 1.0), 0.0)

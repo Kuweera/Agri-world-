@@ -46,19 +46,14 @@ static func _collect_bounds(n: Node, xf: Transform3D, box: Dictionary) -> void:
 				box["has"] = true
 		_collect_bounds(child, cxf, box)
 
-# A vehicle standing still in the yard (scenery): its middle on the node's origin, front toward
-# +Z like a driven one. Null when its .glb is missing.
-static func parked_vehicle(id: String) -> Node3D:
-	if not VehicleData.VEHICLES.has(id):
-		return null
-	if glb_scene(str(VehicleData.VEHICLES[id]["model_path"])) == null:
-		return null
-	var node: Node3D = _vehicle(id)
-	if node == null or node.get_child_count() == 0:
-		return node
-	var c: Vector3 = bounds_of(node).get_center()
-	(node.get_child(0) as Node3D).position -= Vector3(c.x, 0.0, c.z)
-	return node
+# The tracked tractor carries five shifted tread rings (the game shows one at a time while it
+# drives). A still picture shows just the first ring.
+static func _hide_extra_rings(n: Node) -> void:
+	for c in n.get_children():
+		var nm := str(c.name)
+		if c is Node3D and nm.begins_with("Track_Cleats_") and not nm.ends_with("_0"):
+			(c as Node3D).visible = false
+		_hide_extra_rings(c)
 
 # Node3D for a catalogue id, or null if the id is unknown or has nothing to show.
 static func instance_for(id: String) -> Node3D:
@@ -104,6 +99,7 @@ static func _vehicle(id: String) -> Node3D:
 		var s := float(veh["model_scale"])
 		inst.scale = Vector3(s, s, s)
 		inst.rotation.y = PI
+		_hide_extra_rings(inst)
 		root.add_child(inst)
 		return root
 	if veh["type"] == "tractor":
