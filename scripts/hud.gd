@@ -96,14 +96,15 @@ func _ready() -> void:
 	drive_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	drive_box.position = Vector2(20, 130)
 	drive_box.size = Vector2(320, 390)
-	drive_box.add_theme_constant_override("separation", 6)
+	drive_box.add_theme_constant_override("separation", 4)
 	add_child(drive_box)
-	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 58.0, 24)
-	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 58.0, 24)
-	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 320.0, 58.0, 24)
-	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 58.0, 24)
-	_add_button(drive_box, drive_buttons, "camera_reset", "Camera: behind", 320.0, 58.0, 24)
-	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 58.0, 24)
+	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "lift", "Lower tool", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "camera_reset", "Camera: behind", 320.0, 52.0, 22)
+	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 52.0, 22)
 
 	drive_controls = DriveControlsScript.new()
 	add_child(drive_controls)
@@ -199,6 +200,11 @@ func set_drive_mode(on: bool) -> void:
 func set_drive_texts(tool_name: String, seed_name: String) -> void:
 	drive_buttons["implement_next"].text = "Tool: " + tool_name
 	drive_buttons["seed_next"].text = "Seed: " + seed_name
+
+# The lift button shows what a tap will do.
+func set_lift_text(raised: bool, header: bool) -> void:
+	var part := "header" if header else "tool"
+	drive_buttons["lift"].text = ("Lower " if raised else "Raise ") + part
 
 # The strips stay active during Auto (touching one takes control back) but are dimmed.
 func set_auto_active(on: bool) -> void:

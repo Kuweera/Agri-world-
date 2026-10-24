@@ -44,8 +44,10 @@ static func entry(id: String, state) -> Dictionary:
 		]
 		if v["type"] == "harvester":
 			lines.append("Cuts %d tiles wide" % int(v.get("work_width", 1)))
+		elif bool(v.get("tracked", false)):
+			lines.append("Tracks: strong pull, easy on the soil")
 		out["stats"] = "\n".join(lines)
-		out["can_use"] = v["type"] == "tractor"
+		out["can_use"] = true
 		out["in_use"] = str(state.tractor.get("vehicle", "tractor")) == id
 	elif ImplementData.ITEMS.has(id):
 		var it: Dictionary = ImplementData.ITEMS[id]
