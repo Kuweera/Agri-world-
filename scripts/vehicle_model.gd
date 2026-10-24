@@ -5,6 +5,7 @@ extends RefCounted
 
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
+const Hitbox := preload("res://scripts/hitbox.gd")
 
 # Power versus weight. Each kg of implement needs HP_PER_KG horsepower. While the
 # needed power stays under FULL_SPEED_LOAD of the engine, nothing changes. Above that the
@@ -38,7 +39,10 @@ static func loaded_config(cfg: Dictionary, implement_id: String) -> Dictionary:
 	out["speed_factor"] = f
 	return out
 
-static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, delta: float) -> void:
+# others: the machine dictionaries standing in the field. A machine cannot be driven into one;
+# it stops, and v["_blocked"] says so (the autopilot waits a little before giving up).
+static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, delta: float,
+		others: Array = []) -> void:
 	var max_speed: float = cfg["max_speed"]
 
 	# No fuel means no power: the vehicle coasts to a stop.
@@ -51,6 +55,7 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 	v["speed"] = move_toward(float(v["speed"]), target, float(cfg["accel"]) * delta)
 
 	# Steering only works while moving, and flips when reversing.
+	var old_heading: float = v["heading"]
 	var speed: float = v["speed"]
 	var turn_scale := clampf(absf(speed) / max_speed * 2.0, 0.0, 1.0)
 	v["heading"] = fposmod(
@@ -68,6 +73,24 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 			nx = old_x
 			nz = old_z
 			v["speed"] = 0.0
+	# Other machines are solid too. A move that makes the overlap worse is undone, so a machine
+	# that already touches another can still drive away from it.
+	v["_blocked"] = false
+	if not others.is_empty():
+		var hl := float(cfg.get("hit_len", 2.0)) * 0.5
+		var hw := float(cfg.get("hit_wid", 1.4)) * 0.5
+		var now_c: Array = Hitbox.circles(nx, nz, float(v["heading"]), hl, hw)
+		var was_c: Array = Hitbox.circles(old_x, old_z, old_heading, hl, hw)
+		for o in others:
+			var oc: Array = Hitbox.of_machine(o)
+			var pen_new := Hitbox.penetration(now_c, oc)
+			if pen_new > 0.0 and pen_new >= Hitbox.penetration(was_c, oc) - 0.0005:
+				nx = old_x
+				nz = old_z
+				v["heading"] = old_heading
+				v["speed"] = 0.0
+				v["_blocked"] = true
+				break
 	v["x"] = nx
 	v["z"] = nz
 
