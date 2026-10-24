@@ -7,6 +7,7 @@ const CropData := preload("res://scripts/crop_data.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
 const FarmLayout := preload("res://scripts/farm_layout.gd")
+const Parking := preload("res://scripts/parking.gd")
 
 const COLS := 8
 const ROWS := 8
@@ -21,6 +22,8 @@ const HARVEST_LEAVES_STUBBLE := true
 const TILE_PITCH := 1.5
 # Machinery the player owns at the start: the farm tractor and the three original 1-tile tools.
 const STARTER_OWNED := ["tractor", "plough", "seeder", "harvester"]
+# Vehicles taken out of the game, with the price refunded when an old save still owns one.
+const REMOVED_VEHICLES := {"tractor_light": 1800}
 
 var money: int = START_MONEY
 var inventory: Dictionary = {}
@@ -196,8 +199,6 @@ func can_buy(id: String) -> String:
 		return "Unknown machine"
 	if owns(id):
 		return "Already owned"
-	if VehicleData.VEHICLES.has(id) and VehicleData.VEHICLES[id]["type"] != "tractor":
-		return "Coming soon"
 	if money < price:
 		return "Not enough money"
 	return ""
@@ -217,14 +218,44 @@ func equip_implement(id: String) -> String:
 	tractor["implement"] = id
 	return ""
 
-# Switches to an owned tractor. The tank keeps its fuel up to the new tank size.
+# Switches to an owned tractor or combine. The tank keeps its fuel up to the new tank size.
+# The machine you take is the one waiting in the yard by the house, so it starts there,
+# facing the field.
 func select_vehicle(id: String) -> String:
 	var veh := VehicleData.get_vehicle(id)
-	if veh.is_empty() or veh["type"] != "tractor" or not owns(id):
+	if veh.is_empty() or not VehicleData.VEHICLE_TYPES.has(veh["type"]) or not owns(id):
 		return "Not owned"
+	var changed := str(tractor.get("vehicle", "tractor")) != id
 	tractor["vehicle"] = id
 	tractor["fuel"] = minf(float(tractor["fuel"]), float(veh["fuel_capacity"]))
+	if changed:
+		var pose := Parking.start_pose(id)
+		if not pose.is_empty():
+			tractor["x"] = pose["x"]
+			tractor["z"] = pose["z"]
+			tractor["heading"] = pose["heading"]
+			tractor["speed"] = 0.0
+		last_work_tile = -1
 	return ""
+
+# True while a combine is being driven: it has its own header, so the tool button is not used.
+func is_combine() -> bool:
+	return str(vehicle_cfg().get("type", "tractor")) == "harvester"
+
+# The tool in use: a combine always works with its built-in header.
+func active_implement() -> String:
+	return "none" if is_combine() else str(tractor["implement"])
+
+func active_kind() -> String:
+	if is_combine():
+		return "harvester"
+	return ImplementData.type_of(str(tractor["implement"]))
+
+# Tiles worked across by the machine being driven.
+func active_width() -> int:
+	if is_combine():
+		return maxi(1, int(vehicle_cfg().get("work_width", 1)))
+	return ImplementData.width_of(str(tractor["implement"]))
 
 # Applies the tractor's tool to a tile. Returns "" if it did something,
 # "skip" if there was nothing to do (not an error), or an error message.
@@ -325,9 +356,11 @@ func jobs_for(kind: String, now: float) -> Array:
 func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
 	last_worked_tiles = []
 	last_work_error = ""
+	var comb := str(cfg.get("type", "tractor")) == "harvester"
 	var impl_id: String = tractor["implement"]
-	if impl_id == "none" or absf(float(tractor["speed"])) < 0.1:
+	if absf(float(tractor["speed"])) < 0.1 or (not comb and impl_id == "none"):
 		return "skip"
+	# Positive offset: the tool trails behind. Negative: a combine header cuts ahead.
 	var off: float = cfg["work_offset"]
 	var h: float = tractor["heading"]
 	var cx := float(tractor["x"]) - sin(h) * off
@@ -339,8 +372,9 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
 	if idx == last_work_tile:
 		return "skip"
 	last_work_tile = idx
+	var width: int = maxi(1, int(cfg.get("work_width", 1))) if comb else ImplementData.width_of(impl_id)
 	var targets: Array = [idx]
-	var half := int((ImplementData.width_of(impl_id) - 1) / 2)
+	var half := int((width - 1) / 2)
 	for k in range(1, half + 1):
 		for side in [-1.0, 1.0]:
 			var nj := FarmLayout.world_to_tile(
@@ -348,8 +382,8 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String) -> String:
 				cz - sin(h) * side * float(k) * TILE_PITCH)
 			if nj >= 0 and not targets.has(nj):
 				targets.append(nj)
-	var kind: String = ImplementData.type_of(impl_id)
-	var per_tile := int(ImplementData.get_item(impl_id).get("fert_per_tile", 1))
+	var kind: String = "harvester" if comb else ImplementData.type_of(impl_id)
+	var per_tile := 1 if comb else int(ImplementData.get_item(impl_id).get("fert_per_tile", 1))
 	for j in targets:
 		var res := ""
 		if kind == "fertilizer":
@@ -485,7 +519,11 @@ func from_dict(data: Dictionary) -> String:
 	if typeof(own_raw) != TYPE_ARRAY:
 		return "Bad machinery"
 	var own: Array = []
+	var refund := 0
 	for o in own_raw:
+		if typeof(o) == TYPE_STRING and REMOVED_VEHICLES.has(o):
+			refund += int(REMOVED_VEHICLES[o])
+			continue
 		if typeof(o) != TYPE_STRING or not (VehicleData.VEHICLES.has(o) or ImplementData.ITEMS.has(o)):
 			return "Bad machinery"
 		if not own.has(o):
@@ -494,9 +532,11 @@ func from_dict(data: Dictionary) -> String:
 	if typeof(tr) != TYPE_DICTIONARY:
 		return "Bad tractor"
 	var veh = tr.get("vehicle", "tractor")
+	if typeof(veh) == TYPE_STRING and REMOVED_VEHICLES.has(veh):
+		veh = "tractor"
 	if typeof(veh) != TYPE_STRING or not VehicleData.VEHICLES.has(veh) or not own.has(veh):
 		return "Bad tractor"
-	if VehicleData.VEHICLES[veh]["type"] != "tractor":
+	if not VehicleData.VEHICLE_TYPES.has(VehicleData.VEHICLES[veh]["type"]):
 		return "Bad tractor"
 	var cfg: Dictionary = VehicleData.VEHICLES[veh]
 	for key in ["x", "z", "heading", "fuel", "hours"]:
@@ -514,7 +554,7 @@ func from_dict(data: Dictionary) -> String:
 		return "Bad tractor"
 	if impl != "none" and not own.has(impl):
 		return "Bad tractor"
-	money = int(d["money"])
+	money = int(d["money"]) + refund
 	inventory = inv
 	fertilizer = int(fert)
 	owned = own

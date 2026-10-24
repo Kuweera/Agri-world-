@@ -12,6 +12,11 @@ const MachineModels := preload("res://scripts/machine_models.gd")
 
 # Where implements hang on the built-in tractor. A real tractor model sets its own.
 const BUILTIN_HITCH := Vector3(0, 0.35, -1.25)
+# Lifting the tool (3-point hitch / combine header): seconds to move, and how far it goes up.
+const LIFT_TIME := 0.45
+const LIFT_Y := 0.28
+const LIFT_PITCH := 0.38
+const HEADER_LIFT := 0.5      # metres in the model's own size
 
 var impl_nodes := {}                     # built-in implement models, by catalogue id
 var glb_impl := {}                       # real (.glb) implement models on the hitch, by catalogue id
@@ -23,6 +28,15 @@ var cur_vehicle := ""
 var steer_pivots: Array = []
 var steer_vis := 0.0
 var yaw_vis := 0.0
+var raised := true            # where the driver wants the tool: up (travel) or down (work)
+var lift := 1.0               # 1 = fully up, 0 = fully down on the ground
+var hitch_pos := BUILTIN_HITCH
+var is_combine := false
+var rear_steer := false
+var reel_node: Node3D
+var header_node: Node3D
+var header_base_y := 0.0
+var reel_angle := 0.0
 var blob: MeshInstance3D
 var attach: Node3D                       # AttachmentPoint: implements built from the catalogue hang here
 var susp := Suspension.new_state()       # springs for lean and bounce (looks only)
@@ -185,8 +199,9 @@ func _pos_in_root(root: Node3D, n: Node3D) -> Vector3:
 		cur = cur.get_parent()
 	return p
 
-# Shows the real tractor model for a catalogue vehicle id when its .glb loads, otherwise the
-# built-in tractor. The real model's middle is put on the tractor position, so work stays put.
+# Shows the real model for a catalogue vehicle (tractor or combine) when its .glb loads,
+# otherwise the built-in tractor. The real model's middle is put on the vehicle position, so
+# work stays put.
 func _apply_vehicle(vid: String) -> void:
 	cur_vehicle = vid
 	if glb_vehicle != null:
@@ -194,17 +209,24 @@ func _apply_vehicle(vid: String) -> void:
 		glb_vehicle.free()
 		glb_vehicle = null
 	steer_pivots = []
+	reel_node = null
+	header_node = null
+	is_combine = false
+	rear_steer = false
 	wheels = builtin_wheels
 	var veh: Dictionary = VehicleData.get_vehicle(vid)
 	var scene: PackedScene = null
-	if not veh.is_empty() and str(veh["type"]) == "tractor":
+	if not veh.is_empty():
 		scene = MachineModels.glb_scene(str(veh["model_path"]))
 	body_mi.visible = scene == null
 	for bw in builtin_wheels:
 		bw["node"].visible = scene == null
-	attach.position = BUILTIN_HITCH
+	hitch_pos = BUILTIN_HITCH
 	if scene == null:
 		return
+	is_combine = str(veh["type"]) == "harvester"
+	rear_steer = bool(veh.get("rear_steer", false))
+	var tracked := bool(veh.get("tracked", false))
 	var sc := float(veh["model_scale"])
 	var inst: Node3D = scene.instantiate()
 	inst.scale = Vector3(sc, sc, sc)
@@ -213,23 +235,37 @@ func _apply_vehicle(vid: String) -> void:
 	add_child(inst)
 	glb_vehicle = inst
 	var hitch = inst.find_child("Hitch_Rear", true, false)
-	if hitch is Node3D:
+	if hitch is Node3D and not is_combine:
 		var hp: Vector3 = _pos_in_root(inst, hitch as Node3D)
-		attach.position = Vector3(-hp.x * sc, hp.y * sc, -hp.z * sc + inst.position.z)
+		hitch_pos = Vector3(-hp.x * sc, hp.y * sc, -hp.z * sc + inst.position.z)
 	var real_wheels: Array = []
-	for nm in ["Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR"]:
-		var wn = inst.find_child(nm, true, false)
-		if wn is MeshInstance3D:
-			var r := maxf(0.15, (wn as MeshInstance3D).get_aabb().size.y * 0.5 * sc)
-			real_wheels.append({"node": wn, "radius": r, "angle": 0.0, "sign": -1.0})
-	for nm in ["SteerPivot_L", "SteerPivot_R"]:
-		var pn = inst.find_child(nm, true, false)
-		if pn is Node3D:
-			steer_pivots.append(pn)
-	if not real_wheels.is_empty():
-		wheels = real_wheels
-	for bw in builtin_wheels:
-		bw["node"].visible = false
+	if not tracked:
+		for nm in ["Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR"]:
+			var wn = inst.find_child(nm, true, false)
+			if wn is MeshInstance3D:
+				var r := maxf(0.15, (wn as MeshInstance3D).get_aabb().size.y * 0.5 * sc)
+				real_wheels.append({"node": wn, "radius": r, "angle": 0.0, "sign": -1.0})
+		for nm in ["SteerPivot_L", "SteerPivot_R", "SteerPivot_RL", "SteerPivot_RR"]:
+			var pn = inst.find_child(nm, true, false)
+			if pn is Node3D:
+				steer_pivots.append(pn)
+	wheels = real_wheels
+	if is_combine:
+		var rn = inst.find_child("Reel", true, false)
+		if rn is Node3D:
+			reel_node = rn
+		var hn = inst.find_child("Header", true, false)
+		if hn is Node3D:
+			header_node = hn
+			header_base_y = (hn as Node3D).position.y
+
+# Raise or lower the tool (a combine's header). It moves smoothly in update_from().
+func set_raised(on: bool) -> void:
+	raised = on
+
+# True once the tool is all the way down on the ground.
+func is_down() -> bool:
+	return lift < 0.15
 
 func update_from(v: Dictionary, dt: float = 0.0) -> void:
 	if attach == null:
@@ -237,7 +273,7 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 	var vid := str(v.get("vehicle", "tractor"))
 	if vid != cur_vehicle:
 		_apply_vehicle(vid)
-	var id: String = v["implement"]
+	var id: String = "none" if is_combine else str(v["implement"])
 	_ensure_implement(id)
 	var heading: float = v["heading"]
 	var sp: float = v["speed"]
@@ -254,7 +290,12 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 		motion_ready = false
 	position = Vector3(v["x"], float(susp["bounce"]), v["z"])
 	rotation = Vector3(float(susp["pitch"]), heading, float(susp["roll"]))
-	attach.rotation.x = float(susp["impl_pitch"])
+	if dt > 0.0:
+		lift = move_toward(lift, 1.0 if raised else 0.0, dt / LIFT_TIME)
+	attach.position = hitch_pos + Vector3(0.0, lift * LIFT_Y, 0.0)
+	attach.rotation.x = float(susp["impl_pitch"]) + lift * LIFT_PITCH
+	if header_node != null:
+		header_node.position.y = header_base_y + lift * HEADER_LIFT / maxf(0.01, glb_vehicle.scale.y)
 	for k in impl_nodes:
 		impl_nodes[k].visible = (k == id) and not glb_impl.has(k)
 	for k in glb_impl:
@@ -267,4 +308,8 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 		var want := clampf(yaw_vis * 0.35 * (1.0 if sp >= 0.0 else -1.0), -0.5, 0.5)
 		steer_vis = lerpf(steer_vis, want, minf(1.0, dt * 8.0))
 		for p in steer_pivots:
-			p.rotation.y = steer_vis
+			p.rotation.y = -steer_vis if rear_steer else steer_vis
+		# The reel turns while the header is down and the machine is moving.
+		if reel_node != null and lift < 0.5 and absf(sp) > 0.05:
+			reel_angle = fposmod(reel_angle + 4.0 * dt, TAU)
+			reel_node.rotation.x = reel_angle
