@@ -261,7 +261,7 @@ func _show_preview(id: String) -> void:
 		var mid: Vector3 = box.get_center()
 		node.position = Vector3(-mid.x, 0.0, -mid.z)
 		center = Vector3(0, mid.y, 0)
-		dist = maxf(1.5, box.size.length() * 0.5 * 1.5)
+		dist = maxf(1.2, box.size.length() * 0.5 * 1.1)
 		preview_pivot.add_child(node)
 	var pos := center + Vector3(0, dist * 0.3, dist)
 	preview_cam.transform = Transform3D(Basis.looking_at(center - pos, Vector3.UP), pos)
