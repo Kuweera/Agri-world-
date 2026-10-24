@@ -13,7 +13,6 @@ const CATEGORIES := [
 	{"id": "plough", "label": "Ploughs"},
 	{"id": "seeder", "label": "Seeders"},
 	{"id": "fertilizer", "label": "Spreaders"},
-	{"id": "header", "label": "Headers"},
 ]
 
 # Ids in a category, cheapest first.
@@ -22,8 +21,6 @@ static func ids_in(category: String) -> Array:
 		return VehicleData.ids_of_type("tractor")
 	if category == "combine":
 		return VehicleData.ids_of_type("harvester")
-	if category == "header":
-		return ImplementData.ids_of_type("harvester")
 	return ImplementData.ids_of_type(category)
 
 static func is_vehicle(id: String) -> bool:

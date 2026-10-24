@@ -24,6 +24,8 @@ var quality_buttons: Array = []
 var debug_button: Button
 var buttons := {}
 var drive_buttons := {}
+var machine_row := HBoxContainer.new()   # quick switch between machines: previous, name, next
+var machine_buttons := {}
 var drive_controls
 var msg_until := 0
 var frame_times := PackedFloat32Array()
@@ -105,6 +107,15 @@ func _ready() -> void:
 	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 52.0, 22)
 	_add_button(drive_box, drive_buttons, "camera_reset", "Camera: behind", 320.0, 52.0, 22)
 	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 52.0, 22)
+
+	# Quick machine switch, top centre under the vehicle line.
+	machine_row.position = Vector2(vp.x / 2.0 - 230.0, 160.0)
+	machine_row.add_theme_constant_override("separation", 6)
+	machine_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(machine_row)
+	_add_button(machine_row, machine_buttons, "machine_prev", "<", 70.0, 52.0, 26)
+	_add_button(machine_row, machine_buttons, "machine_next", "Machine", 310.0, 52.0, 22)
+	_add_button(machine_row, machine_buttons, "machine_next2", ">", 70.0, 52.0, 26)
 
 	drive_controls = DriveControlsScript.new()
 	add_child(drive_controls)
@@ -193,6 +204,7 @@ func set_drive_mode(on: bool) -> void:
 	tile_panel.visible = not on
 	action_box.visible = not on
 	drive_box.visible = on
+	machine_row.visible = on
 	vehicle_label.visible = on
 	drive_controls.visible = on
 	drive_controls.reset()
@@ -200,6 +212,10 @@ func set_drive_mode(on: bool) -> void:
 func set_drive_texts(tool_name: String, seed_name: String) -> void:
 	drive_buttons["implement_next"].text = "Tool: " + tool_name
 	drive_buttons["seed_next"].text = "Seed: " + seed_name
+
+# The middle machine button names the machine being driven and where it is in the list.
+func set_machine_text(machine_name: String, index: int, total: int) -> void:
+	machine_buttons["machine_next"].text = "%s  (%d/%d)" % [machine_name, index + 1, total]
 
 # The lift button shows what a tap will do.
 func set_lift_text(raised: bool, header: bool) -> void:
