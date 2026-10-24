@@ -15,8 +15,6 @@ const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const EnvironmentSetupScript := preload("res://scripts/environment_setup.gd")
-const ParkingScript := preload("res://scripts/parking.gd")
-const MachineModels := preload("res://scripts/machine_models.gd")
 
 const QUALITY_NAMES := ["Low", "Medium", "High"]
 const DRIVE_SAVE_INTERVAL := 8.0   # seconds; saving more often can cause hitches on slow storage
@@ -26,8 +24,8 @@ var rig
 var grid
 var hud
 var state
-var tractor_view
-var autopilot
+var tractor_view          # view of the machine being driven
+var autopilot             # autopilot of the machine being driven
 var settings: Dictionary = {}
 var cfg: Dictionary = {}
 var selected := -1
@@ -40,15 +38,11 @@ var save_timer := 0.0
 var empty_warned := false
 var shop                  # machinery shop screen (an overlay)
 var shop_button: Button
-var auto_pass := 0       # which autopilot pass we are on (max 3)
-var pass_worked := 0     # tiles worked in this pass
-var job_worked := 0      # tiles worked in the whole autopilot job
+var machines := {}       # vehicle id -> {"view", "ap", "cfg", "cfg_impl"}: every machine runs at once
 var vehicle_text_timer := 0.0
 var last_heading := 0.0
 var cam_resetting := false
-var tool_raised := true        # the tool (or combine header) is up for travel; work needs it down
 var lift_hint_shown := false
-var parked_root: Node3D        # machines waiting in the yard by the house
 
 func _ready() -> void:
 	settings = SettingsScript.load_settings()
@@ -57,18 +51,13 @@ func _ready() -> void:
 	add_child(env_setup)
 
 	cfg = VehicleData.VEHICLES["tractor"]
-	autopilot = AutoPilotScript.new()
 	state = GameStateScript.new()
 	var load_result: String = SaveManager.load_into(state)
-	_refresh_cfg()
 
 	grid = FarmGridScript.new()
 	add_child(grid)
 
-	tractor_view = TractorViewScript.new()
-	add_child(tractor_view)
-	tractor_view.update_from(state.tractor)
-	_refresh_parked()
+	_sync_machines()
 
 	rig = CameraRigScript.new()
 	rig.position = Vector3(0, 0, -1)
@@ -107,6 +96,7 @@ func _ready() -> void:
 	_refresh_all_tiles()
 	_update_drive_texts()
 	_update_lift_text()
+	_update_machine_text()
 	_update_ui()
 
 	if load_result == "":
@@ -125,7 +115,8 @@ func _apply_quality(q: int) -> void:
 	env_setup.apply_quality(q)
 	grid.set_detail(0 if q == 0 else 1)
 	grid.set_blob_shadows(q == 0)
-	tractor_view.set_blob_visible(q == 0)
+	for id in machines:
+		machines[id]["view"].set_blob_visible(q == 0)
 
 func _now() -> float:
 	return Time.get_unix_time_from_system()
@@ -164,14 +155,53 @@ func _fertilized_note(t: Dictionary) -> String:
 		return ""
 	return "\nFertilized (+%d%% yield)" % int(float(CropData.FERTILIZER["yield_bonus"]) * 100.0)
 
-# Vehicle settings with the current implement's weight applied (slower with heavy tools).
+# Vehicle settings of the machine being driven, with its tool's weight applied.
 func _refresh_cfg() -> void:
-	cfg = VehicleModel.loaded_config(state.vehicle_cfg(), state.active_implement())
+	var id := _active_id()
+	if machines.has(id):
+		machines[id]["cfg_impl"] = "?"
+		cfg = _cfg_for(id)
 
-# ---- Machinery shop ----
+func _active_id() -> String:
+	return str(state.tractor.get("vehicle", "tractor"))
+
+# Vehicle settings of any machine, with its tool's weight applied (cached until the tool changes).
+func _cfg_for(id: String) -> Dictionary:
+	var rt: Dictionary = machines[id]
+	var impl: String = state.machine_implement(state.fleet[id])
+	if str(rt["cfg_impl"]) != impl:
+		rt["cfg"] = VehicleModel.loaded_config(VehicleData.VEHICLES[id], impl)
+		rt["cfg_impl"] = impl
+	return rt["cfg"]
+
+func _machine_name(id: String) -> String:
+	return str(VehicleData.VEHICLES[id]["name"])
+
+# Every machine of the fleet gets its own view and its own autopilot, so they can all work
+# at once. Machines that are gone lose theirs.
+func _sync_machines() -> void:
+	for id in state.fleet:
+		if not machines.has(id):
+			var view = TractorViewScript.new()
+			add_child(view)
+			view.update_from(state.fleet[id])
+			if settings.has("quality"):
+				view.set_blob_visible(int(settings["quality"]) == 0)
+			machines[id] = {"view": view, "ap": AutoPilotScript.new(), "cfg": {}, "cfg_impl": "?"}
+	for id in machines.keys():
+		if not state.fleet.has(id):
+			machines[id]["view"].queue_free()
+			machines.erase(id)
+	_bind_active()
+
+# Points tractor_view / autopilot / cfg at the machine being driven.
+func _bind_active() -> void:
+	var id := _active_id()
+	tractor_view = machines[id]["view"]
+	autopilot = machines[id]["ap"]
+	_refresh_cfg()
+
 func _open_shop() -> void:
-	if autopilot.active:
-		_stop_auto("")
 	if hud.has_method("hide"):
 		hud.hide()
 	rig.set_process_input(false)
@@ -188,15 +218,13 @@ func _on_shop_closed() -> void:
 	_update_drive_texts()
 	_update_ui()
 
-# A machine was bought or put to use: refresh the vehicle settings, texts and the save.
+# A machine was bought or put to use: refresh the machines, texts and the save.
 func _on_shop_changed() -> void:
 	if autopilot.active:
 		_stop_auto("")
-	tool_raised = true
-	tractor_view.set_raised(true)
-	_refresh_cfg()
-	_refresh_parked()
+	_sync_machines()
 	_update_lift_text()
+	_update_machine_text()
 	_update_drive_texts()
 	_update_ui()
 	tractor_view.update_from(state.tractor)
@@ -219,8 +247,9 @@ func _check_relief() -> void:
 
 func _process(delta: float) -> void:
 	var dt := minf(delta, 0.05)
+	_simulate(dt)
 	if driving:
-		_drive(dt)
+		_drive_view(dt)
 
 	if dirty:
 		save_timer += delta
@@ -239,50 +268,75 @@ func _process(delta: float) -> void:
 		_update_ui()
 	_check_relief()
 
-func _drive(dt: float) -> void:
-	var tr: Dictionary = state.tractor
-	var thr: float = hud.get_throttle()
-	var st: float = hud.get_steer()
-
-	if autopilot.active:
-		if absf(thr) > 0.2 or absf(st) > 0.2:
-			_stop_auto("Manual control")
+# Every machine moves every frame: the one you drive follows your controls, the others follow
+# their autopilot (or stand still).
+func _simulate(dt: float) -> void:
+	var act := _active_id()
+	for id in state.fleet.keys():
+		if not machines.has(id):
+			continue
+		if id == act and driving:
+			_run_machine(id, dt, hud.get_throttle(), hud.get_steer(), true)
 		else:
-			var ctl: Vector2 = autopilot.update(tr, dt)
+			_run_machine(id, dt, 0.0, 0.0, false)
+
+# One machine for one frame: autopilot or controls, physics (other machines are solid), the
+# tool going down or up, the work itself, and its picture.
+func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bool) -> void:
+	var m: Dictionary = state.fleet[id]
+	var rt: Dictionary = machines[id]
+	var ap = rt["ap"]
+	var view = rt["view"]
+	var mcfg: Dictionary = _cfg_for(id)
+	var thr := thr_in
+	var st := st_in
+
+	if ap.active:
+		if manual and (absf(thr) > 0.2 or absf(st) > 0.2):
+			_stop_auto("Manual control", id)
+		else:
+			ap.holding = bool(m.get("_blocked", false))
+			var ctl: Vector2 = ap.update(m, dt)
 			thr = ctl.x
 			st = ctl.y
-			if not autopilot.active:
-				_auto_ended()
+			if not ap.active:
+				_auto_ended(id)
 
-	VehicleModel.step(tr, cfg, thr, st, dt)
+	VehicleModel.step(m, mcfg, thr, st, dt, state.others_of(id))
 
-	if float(tr["fuel"]) <= 0.0 and not empty_warned:
-		empty_warned = true
-		hud.set_message("Out of fuel - tap Refuel")
-	elif float(tr["fuel"]) > 0.0:
-		empty_warned = false
+	if id == _active_id():
+		if float(m["fuel"]) <= 0.0 and not empty_warned:
+			empty_warned = true
+			hud.set_message("Out of fuel - tap Refuel")
+		elif float(m["fuel"]) > 0.0:
+			empty_warned = false
 
-	# Manual driving always works the field; the autopilot only while on a lane.
 	# The autopilot puts the tool down on a work lane and lifts it for turns and travel.
-	if autopilot.active and tool_raised == autopilot.working:
-		tool_raised = not autopilot.working
-		tractor_view.set_raised(tool_raised)
-		_update_lift_text()
+	if ap.active and view.raised == ap.working:
+		view.set_raised(not ap.working)
+		if id == _active_id():
+			_update_lift_text()
 
 	# Work only happens with the tool all the way down.
-	if ((not autopilot.active) or autopilot.working) and tractor_view.is_down():
-		_apply_work()
-	elif tool_raised and not autopilot.active and not lift_hint_shown \
-			and state.active_kind() != "none" and absf(float(tr["speed"])) > 0.5 \
-			and float(tr["z"]) < 1.0 and absf(float(tr["x"])) < 7.0:
+	if ((not ap.active) or ap.working) and view.is_down():
+		_apply_work(id)
+	elif manual and view.raised and not ap.active and not lift_hint_shown \
+			and state.machine_kind(m) != "none" and absf(float(m["speed"])) > 0.5 \
+			and float(m["z"]) < 1.0 and absf(float(m["x"])) < 7.0:
 		lift_hint_shown = true
 		hud.set_message("Tool is up - tap Lower to work", 3500)
 
-	tractor_view.update_from(tr, dt)
+	view.update_from(m, dt)
+	if absf(float(m["speed"])) > 0.05:
+		dirty = true
+
+# Camera and readouts follow the machine being driven.
+func _drive_view(dt: float) -> void:
+	var tr: Dictionary = state.tractor
 	rig.position = Vector3(tr["x"], 0.0, tr["z"])
 
-	# The camera keeps its angle around the tractor (you can drag to orbit freely).
-	# It turns along with the tractor, and "Camera: behind" swings it back.
+	# The camera keeps its angle around the machine (you can drag to orbit freely).
+	# It turns along with it, and "Camera: behind" swings it back.
 	var heading: float = tr["heading"]
 	rig.yaw += angle_difference(last_heading, heading)
 	last_heading = heading
@@ -297,8 +351,6 @@ func _drive(dt: float) -> void:
 	if vehicle_text_timer >= 0.2:
 		vehicle_text_timer = 0.0
 		hud.set_vehicle_text(_vehicle_text(tr))
-	if absf(float(tr["speed"])) > 0.05:
-		dirty = true
 
 func _vehicle_text(tr: Dictionary) -> String:
 	var secs := int(float(tr["hours"]) * 3600.0)
@@ -306,51 +358,43 @@ func _vehicle_text(tr: Dictionary) -> String:
 		tr["fuel"], int(cfg["fuel_capacity"]), absf(float(tr["speed"])), float(cfg["max_speed"]),
 		floori(secs / 60.0), secs % 60]
 
-func _apply_work() -> void:
-	var res: String = state.work_with_tractor(cfg, _now(), seed_crop)
+# A message about one machine: plain for the machine you drive, named for the others.
+func _say(id: String, text: String) -> void:
+	if id == _active_id():
+		hud.set_message(text)
+	else:
+		hud.set_message("%s: %s" % [_machine_name(id), text])
+
+func _apply_work(id: String) -> void:
+	var m: Dictionary = state.fleet[id]
+	var ap = machines[id]["ap"]
+	var res: String = state.work_with_tractor(_cfg_for(id), _now(), seed_crop, m)
 	if res == "":
 		var worked_n: int = state.last_worked_tiles.size()
-		job_worked += worked_n
-		pass_worked += worked_n
+		ap.job_worked += worked_n
+		ap.pass_worked += worked_n
 		for ti in state.last_worked_tiles:
 			_refresh_tile(ti)
 		_update_ui()
 		dirty = true
 		_check_relief()
 		if state.last_work_error != "":
-			if autopilot.active:
-				_stop_auto(state.last_work_error)
+			if ap.active:
+				_stop_auto(state.last_work_error, id)
 			else:
-				hud.set_message(state.last_work_error)
+				_say(id, state.last_work_error)
 	elif res != "skip":
-		if autopilot.active:
-			_stop_auto(res)
+		if ap.active:
+			_stop_auto(res, id)
 		else:
-			hud.set_message(res)
+			_say(id, res)
 
 func _update_lift_text() -> void:
-	hud.set_lift_text(tool_raised, state.is_combine())
+	hud.set_lift_text(tractor_view.raised, state.is_combine())
 
-# Machines the player owns but is not driving wait in the yard beside the farmhouse.
-func _refresh_parked() -> void:
-	if parked_root == null:
-		parked_root = Node3D.new()
-		add_child(parked_root)
-	for c in parked_root.get_children():
-		parked_root.remove_child(c)
-		c.free()
-	var current := str(state.tractor.get("vehicle", "tractor"))
-	for id in state.owned:
-		var sid := str(id)
-		if sid == current or not ParkingScript.has_slot(sid):
-			continue
-		var node: Node3D = MachineModels.parked_vehicle(sid)
-		if node == null:
-			continue
-		var slot: Dictionary = ParkingScript.SLOTS[sid]
-		node.position = Vector3(float(slot["x"]), 0.0, float(slot["z"]))
-		node.rotation.y = float(slot["heading"])
-		parked_root.add_child(node)
+func _update_machine_text() -> void:
+	var ids: Array = state.machine_ids()
+	hud.set_machine_text(_machine_name(_active_id()), maxi(0, ids.find(_active_id())), ids.size())
 
 # ---- Autopilot ----
 
@@ -363,17 +407,22 @@ func _toggle_auto() -> void:
 		hud.set_message("Pick a tool first")
 		return
 	var now := _now()
-	var jobs: Array = state.jobs_for(kind, now)
+	var skip := _rows_taken(_active_id(), kind)
+	var jobs: Array = state.jobs_for(kind, now, skip)
 	if jobs.is_empty():
-		hud.set_message("Nothing to do for this tool")
+		if skip.is_empty():
+			hud.set_message("Nothing to do for this tool")
+		else:
+			hud.set_message("Other machines are working the rest")
 		return
 	if float(state.tractor["fuel"]) < 1.0:
 		hud.set_message("Refuel first")
 		return
 	state.last_work_tile = -1
-	auto_pass = 1
-	job_worked = 0
-	pass_worked = 0
+	autopilot.kind = kind
+	autopilot.pass_no = 1
+	autopilot.job_worked = 0
+	autopilot.pass_worked = 0
 	var width: int = state.active_width()
 	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"]), width, GameStateScript.ROWS):
 		return
@@ -393,6 +442,20 @@ func _toggle_auto() -> void:
 			note = "Autopilot on - money covers %d of %d tiles" % [int(state.money / cost), n]
 	hud.set_message(note, 4000)
 
+# Field rows other machines of the same kind are already working, so a second machine takes
+# the rest of the field instead of driving into the first.
+func _rows_taken(except_id: String, kind: String) -> Array:
+	var rows: Array = []
+	for oid in machines:
+		if oid == except_id:
+			continue
+		var oap = machines[oid]["ap"]
+		if oap.active and oap.kind == kind:
+			for r in oap.reserved_rows:
+				if not rows.has(r):
+					rows.append(r)
+	return rows
+
 func _count_tiles(st: String) -> int:
 	var n := 0
 	for t in state.tiles:
@@ -401,12 +464,14 @@ func _count_tiles(st: String) -> int:
 	return n
 
 # What was done, why it stopped and what is left.
-func _auto_summary(kind: String) -> String:
+func _auto_summary(kind: String, ap = null) -> String:
+	if ap == null:
+		ap = autopilot
 	var text := ""
-	if autopilot.finished:
-		text = "Autopilot finished: %d tiles" % job_worked
+	if ap.finished:
+		text = "Autopilot finished: %d tiles" % ap.job_worked
 	else:
-		text = "%s: %d tiles done" % [autopilot.message, job_worked]
+		text = "%s: %d tiles done" % [ap.message, ap.job_worked]
 	var now := _now()
 	if kind == "harvester":
 		var ripe: int = state.count_work(kind, now)
@@ -425,43 +490,49 @@ func _auto_summary(kind: String) -> String:
 			text += ", %d not ploughed" % raw
 	return text
 
-func _stop_auto(reason: String) -> void:
-	var kind: String = state.active_kind()
-	autopilot.stop(reason)
-	hud.set_auto_active(false)
-	tool_raised = true
-	tractor_view.set_raised(true)
-	_update_lift_text()
+# Stops a machine's autopilot (the machine being driven when id is empty) and lifts its tool.
+func _stop_auto(reason: String, id: String = "") -> void:
+	if id == "":
+		id = _active_id()
+	var ap = machines[id]["ap"]
+	var kind: String = ap.kind
+	ap.stop(reason)
+	machines[id]["view"].set_raised(true)
+	if id == _active_id():
+		hud.set_auto_active(false)
+		_update_lift_text()
 	if reason != "":
-		hud.set_message(_auto_summary(kind), 5000)
+		_say(id, _auto_summary(kind, ap))
 	dirty = true
 
-func _auto_ended() -> void:
-	var kind: String = state.active_kind()
-	if autopilot.finished:
+func _auto_ended(id: String = "") -> void:
+	if id == "":
+		id = _active_id()
+	var ap = machines[id]["ap"]
+	var m: Dictionary = state.fleet[id]
+	var kind: String = ap.kind
+	if ap.finished:
 		# More work may have appeared during the pass (crops ripening, missed
 		# tiles). Look again and go where work is still needed, up to 3 passes.
-		var jobs: Array = state.jobs_for(kind, _now())
-		if not jobs.is_empty() and pass_worked > 0 and auto_pass < 3:
-			auto_pass += 1
-			pass_worked = 0
-			state.last_work_tile = -1
-			if autopilot.start(state.tractor, jobs, float(cfg["work_offset"]),
-					state.active_width(), GameStateScript.ROWS):
-				hud.set_message("Autopilot: pass %d" % auto_pass)
+		var jobs: Array = state.jobs_for(kind, _now(), _rows_taken(id, kind))
+		if not jobs.is_empty() and ap.pass_worked > 0 and ap.pass_no < 3:
+			ap.pass_no += 1
+			ap.pass_worked = 0
+			m["_lwt"] = -1
+			if ap.start(m, jobs, float(_cfg_for(id)["work_offset"]), state.machine_width(m), GameStateScript.ROWS):
+				_say(id, "Autopilot: pass %d" % ap.pass_no)
 				return
-	hud.set_auto_active(false)
-	tool_raised = true
-	tractor_view.set_raised(true)
-	_update_lift_text()
-	hud.set_message(_auto_summary(kind), 5000)
+	machines[id]["view"].set_raised(true)
+	if id == _active_id():
+		hud.set_auto_active(false)
+		_update_lift_text()
+	_say(id, _auto_summary(kind, ap))
 	_save()
 
 # ---- Mode switching ----
 
 func _enter_drive() -> void:
 	driving = true
-	state.tractor["speed"] = 0.0
 	var old := selected
 	selected = -1
 	if old >= 0:
@@ -473,24 +544,20 @@ func _enter_drive() -> void:
 	rig.yaw = heading + PI
 	rig.pitch = 0.7
 	rig.dist = 10.0
-	state.last_work_tile = -1
 	empty_warned = false
-	tool_raised = true
 	lift_hint_shown = false
-	tractor_view.set_raised(true)
 	_update_lift_text()
+	_update_machine_text()
 	vehicle_text_timer = 1.0
 	hud.set_drive_mode(true)
-	hud.set_auto_active(false)
+	hud.set_auto_active(autopilot.active)
 	_update_drive_texts()
 	_update_ui()
 
+# Back to the overview. Machines on autopilot keep working; the one you were driving stops.
 func _enter_manage() -> void:
-	if autopilot.active:
-		autopilot.stop("")
 	hud.set_auto_active(false)
 	driving = false
-	state.tractor["speed"] = 0.0
 	rig.allow_rotate = true
 	rig.position = Vector3(0, 0, -1)
 	rig.yaw = 0.5
@@ -500,6 +567,38 @@ func _enter_manage() -> void:
 	hud.set_drive_mode(false)
 	_save()
 	_update_ui()
+
+# ---- Switching machines ----
+
+# Takes the wheel of the next (or previous) owned machine without going back to the shop.
+func _switch_machine(step: int) -> void:
+	var ids: Array = state.machine_ids()
+	if ids.size() < 2:
+		hud.set_message("Only one machine - buy more in the shop")
+		return
+	var i := ids.find(_active_id())
+	_activate(str(ids[posmod(i + step, ids.size())]))
+
+func _activate(id: String) -> void:
+	if state.select_vehicle(id) != "":
+		return
+	_bind_active()
+	var tr: Dictionary = state.tractor
+	last_heading = float(tr["heading"])
+	cam_resetting = false
+	empty_warned = false
+	lift_hint_shown = false
+	if driving:
+		rig.position = Vector3(tr["x"], 0.0, tr["z"])
+		rig.yaw = last_heading + PI
+		rig.apply_view()
+	hud.set_auto_active(autopilot.active)
+	_update_lift_text()
+	_update_machine_text()
+	_update_drive_texts()
+	vehicle_text_timer = 1.0
+	_update_ui()
+	dirty = true
 
 # ---- Input ----
 
@@ -522,13 +621,14 @@ func _handle_reset() -> void:
 	var t := Time.get_ticks_msec()
 	if t < reset_armed_until:
 		reset_armed_until = 0
-		if autopilot.active:
-			autopilot.stop("")
+		for id in machines:
+			machines[id]["ap"].stop("")
+			machines[id]["view"].queue_free()
+		machines = {}
 		state = GameStateScript.new()
 		selected = -1
 		_refresh_all_tiles()
-		tractor_view.update_from(state.tractor)
-		_refresh_parked()
+		_sync_machines()
 		if driving:
 			_enter_manage()
 		_save()
@@ -573,9 +673,14 @@ func _on_action(action: String) -> void:
 		if autopilot.active:
 			hud.set_message("Autopilot works the tool")
 			return
-		tool_raised = not tool_raised
-		tractor_view.set_raised(tool_raised)
+		tractor_view.set_raised(not tractor_view.raised)
 		_update_lift_text()
+		return
+	if action == "machine_prev":
+		_switch_machine(-1)
+		return
+	if action == "machine_next" or action == "machine_next2":
+		_switch_machine(1)
 		return
 	if action == "implement_next":
 		if state.is_combine():
