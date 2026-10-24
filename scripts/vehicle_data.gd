@@ -124,7 +124,7 @@ const VEHICLES := {
 		"park_wid": 3.2,         # room needed when parked (header sticks out)
 		"paint": Color(0.15, 0.45, 0.3),
 	},
-	"combine_large": {
+	"combine_large_b": {
 		"id": "combine_large_b",
 		"name": "Tracked Combine Harvester",
 		"type": "harvester",
