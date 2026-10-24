@@ -1,7 +1,7 @@
 extends Node3D
-# Presentation only: a low-poly tractor with cab, fenders, lugged wheels that spin,
-# and tool visuals (plough, seeder, harvester) that trail behind.
-# The tractor faces +z in local space, so rotation.y = heading.
+# Presentation only: one machine (tractor or combine) and the tool it carries.
+# It shows the real .glb model; a simple built-in tractor stands in if the file is missing.
+# The machine faces +z in local space, so rotation.y = heading.
 
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
@@ -17,6 +17,13 @@ const LIFT_TIME := 0.45
 const LIFT_Y := 0.28
 const LIFT_PITCH := 0.38
 const HEADER_LIFT := 0.5      # metres in the model's own size
+# Track animation (model Tractor_Heavy_Tracked.glb): five shifted cleat rings per pod.
+const TRACK_TAGS := ["FL", "FR", "RL", "RR"]
+const TRACK_VARIANTS := 5
+const TRACK_PITCH := 0.23622  # metres between cleats, as built
+const TRACK_VISUAL := 0.3     # how fast the tread runs compared with the ground (looks only)
+const TRACK_PARTS := [["Track_Sprocket_", 0.6], ["Track_Idler_F_", 0.39], ["Track_Idler_R_", 0.39],
+	["Track_Roller_0_", 0.14], ["Track_Roller_1_", 0.14], ["Track_Roller_2_", 0.14]]
 
 var impl_nodes := {}                     # built-in implement models, by catalogue id
 var glb_impl := {}                       # real (.glb) implement models on the hitch, by catalogue id
@@ -37,6 +44,12 @@ var reel_node: Node3D
 var header_node: Node3D
 var header_base_y := 0.0
 var reel_angle := 0.0
+# Tracked tractors: sprocket, idlers and rollers spin; the cleat ring steps round the belt.
+var track_spin: Array = []     # [{"node", "radius", "angle"}]
+var track_cleats: Array = []   # one array of shifted cleat rings per track pod
+var track_dist := 0.0
+var track_pitch := TRACK_PITCH
+var track_vi := -1
 var blob: MeshInstance3D
 var attach: Node3D                       # AttachmentPoint: implements built from the catalogue hang here
 var susp := Suspension.new_state()       # springs for lean and bounce (looks only)
@@ -72,11 +85,36 @@ func _add_wheel(pos: Vector3, radius: float, width: float, mesh: ArrayMesh) -> v
 
 func _ready() -> void:
 	if attach == null:
-		_build_builtin()
+		_build_base()
 
-# The built-in tractor and implements. They stay as the fallback when a .glb is missing.
-func _build_builtin() -> void:
+# The hitch point and the blob shadow. The built-in tractor is only built when it is needed.
+func _build_base() -> void:
 	mat_vc = MeshBuilder.vc_material()
+	# Hitch at the rear of the machine. Implements are built from the catalogue and attached
+	# here the first time they are used.
+	attach = Node3D.new()
+	attach.name = "AttachmentPoint"
+	attach.position = BUILTIN_HITCH
+	add_child(attach)
+
+	# Cheap blob shadow (visible when real shadows are off)
+	var bb := MeshBuilder.new()
+	bb.add_flat_quad(Vector3(-0.95, 0.03, -1.4), Vector3(1.25, 0.03, -1.4), Vector3(1.25, 0.03, 1.7), Vector3(-0.95, 0.03, 1.7), Color(0, 0, 0, 1))
+	var blob_mat := StandardMaterial3D.new()
+	blob_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	blob_mat.albedo_color = Color(0, 0, 0, 0.3)
+	blob_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	blob_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	blob = MeshInstance3D.new()
+	blob.mesh = bb.build()
+	blob.material_override = blob_mat
+	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(blob)
+
+# The simple built-in tractor: a stand-in when a model file is missing.
+func _build_builtin_tractor() -> void:
+	if body_mi != null:
+		return
 	var mb := MeshBuilder.new()
 	var green := Color(0.2, 0.6, 0.25)
 	var dark := Color(0.22, 0.22, 0.25)
@@ -99,77 +137,12 @@ func _build_builtin() -> void:
 	mb.add_box(Vector3(0, 0.35, -1.25), Vector3(0.2, 0.15, 0.2), dark)
 	mb.add_prism(Vector3(0.3, 1.1, 0.9), Vector3(0.3, 1.75, 0.9), 0.04, 0.035, 6, dark, dark, true)
 	body_mi = _mesh_node(self, mb.build())
-
 	var rear := _wheel_mesh(0.62, 0.42)
 	var front := _wheel_mesh(0.4, 0.28)
 	_add_wheel(Vector3(0.8, 0.62, -0.55), 0.62, 0.42, rear)
 	_add_wheel(Vector3(-0.8, 0.62, -0.55), 0.62, 0.42, rear)
 	_add_wheel(Vector3(0.7, 0.4, 1.0), 0.4, 0.28, front)
 	_add_wheel(Vector3(-0.7, 0.4, 1.0), 0.4, 0.28, front)
-
-	var steel := Color(0.58, 0.6, 0.65)
-	var plough := Node3D.new()
-	var pb := MeshBuilder.new()
-	pb.add_box(Vector3(0, 0.55, -1.5), Vector3(1.3, 0.1, 0.12), dark)
-	for x in [-0.4, 0.0, 0.4]:
-		pb.add_box_xf(Transform3D(Basis(Vector3.UP, 0.5), Vector3(x, 0.28, -1.95)), Vector3(0.08, 0.45, 0.6), steel, 0.6)
-		pb.add_box(Vector3(x, 0.45, -1.65), Vector3(0.06, 0.2, 0.06), dark)
-	_mesh_node(plough, pb.build())
-	add_child(plough)
-	impl_nodes["plough"] = plough
-
-	var seeder := Node3D.new()
-	var sb := MeshBuilder.new()
-	sb.add_box(Vector3(0, 0.95, -1.7), Vector3(1.2, 0.5, 0.6), Color(0.92, 0.5, 0.15))
-	sb.add_box(Vector3(0, 0.55, -1.5), Vector3(1.4, 0.08, 0.1), dark)
-	for x in [-0.45, -0.15, 0.15, 0.45]:
-		sb.add_prism(Vector3(x, 0.7, -1.75), Vector3(x, 0.1, -2.0), 0.03, 0.02, 5, steel, dark)
-	_mesh_node(seeder, sb.build())
-	add_child(seeder)
-	impl_nodes["seeder"] = seeder
-
-	var harvester := Node3D.new()
-	var hb := MeshBuilder.new()
-	hb.add_box(Vector3(0, 0.5, -1.95), Vector3(1.9, 0.4, 0.8), Color(0.92, 0.8, 0.15))
-	hb.add_box(Vector3(0, 0.3, -2.4), Vector3(1.9, 0.05, 0.12), Color(0.75, 0.2, 0.15), 0.0, 1.0)
-	hb.add_box(Vector3(0.95, 0.6, -2.0), Vector3(0.06, 0.5, 0.9), Color(0.92, 0.8, 0.15))
-	hb.add_box(Vector3(-0.95, 0.6, -2.0), Vector3(0.06, 0.5, 0.9), Color(0.92, 0.8, 0.15))
-	hb.add_prism(Vector3(-0.9, 0.95, -2.15), Vector3(0.9, 0.95, -2.15), 0.26, 0.26, 8, Color(0.75, 0.25, 0.15), Color(0.75, 0.25, 0.15), true, true)
-	_mesh_node(harvester, hb.build())
-	add_child(harvester)
-	impl_nodes["harvester"] = harvester
-
-	var blue := Color(0.2, 0.45, 0.75)
-	var spreader := Node3D.new()
-	var fb := MeshBuilder.new()
-	fb.add_box(Vector3(0, 0.55, -1.5), Vector3(1.4, 0.08, 0.1), dark)
-	fb.add_prism(Vector3(0, 1.3, -1.85), Vector3(0, 0.75, -1.85), 0.55, 0.15, 10, blue, blue, true)
-	fb.add_prism(Vector3(0, 0.62, -2.25), Vector3(0, 0.58, -2.25), 0.45, 0.45, 10, steel, steel, true, true)
-	_mesh_node(spreader, fb.build())
-	add_child(spreader)
-	impl_nodes["spreader"] = spreader
-
-	# Hitch at the rear of the tractor. Wide and extra implements are built from the catalogue
-	# and attached here the first time they are used.
-	attach = Node3D.new()
-	attach.name = "AttachmentPoint"
-	attach.position = BUILTIN_HITCH
-	add_child(attach)
-	wheels = builtin_wheels
-
-	# Cheap blob shadow (visible when real shadows are off)
-	var bb := MeshBuilder.new()
-	bb.add_flat_quad(Vector3(-0.95, 0.03, -1.4), Vector3(1.25, 0.03, -1.4), Vector3(1.25, 0.03, 1.7), Vector3(-0.95, 0.03, 1.7), Color(0, 0, 0, 1))
-	var blob_mat := StandardMaterial3D.new()
-	blob_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	blob_mat.albedo_color = Color(0, 0, 0, 0.3)
-	blob_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	blob_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	blob = MeshInstance3D.new()
-	blob.mesh = bb.build()
-	blob.material_override = blob_mat
-	blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(blob)
 
 func set_blob_visible(on: bool) -> void:
 	if blob != null:
@@ -213,14 +186,21 @@ func _apply_vehicle(vid: String) -> void:
 	header_node = null
 	is_combine = false
 	rear_steer = false
+	track_spin = []
+	track_cleats = []
+	track_vi = -1
 	wheels = builtin_wheels
 	var veh: Dictionary = VehicleData.get_vehicle(vid)
 	var scene: PackedScene = null
 	if not veh.is_empty():
 		scene = MachineModels.glb_scene(str(veh["model_path"]))
-	body_mi.visible = scene == null
-	for bw in builtin_wheels:
-		bw["node"].visible = scene == null
+	if scene == null:
+		_build_builtin_tractor()
+		wheels = builtin_wheels
+	if body_mi != null:
+		body_mi.visible = scene == null
+		for bw in builtin_wheels:
+			bw["node"].visible = scene == null
 	hitch_pos = BUILTIN_HITCH
 	if scene == null:
 		return
@@ -250,6 +230,8 @@ func _apply_vehicle(vid: String) -> void:
 			if pn is Node3D:
 				steer_pivots.append(pn)
 	wheels = real_wheels
+	if tracked:
+		_setup_tracks(inst, sc)
 	if is_combine:
 		var rn = inst.find_child("Reel", true, false)
 		if rn is Node3D:
@@ -258,6 +240,32 @@ func _apply_vehicle(vid: String) -> void:
 		if hn is Node3D:
 			header_node = hn
 			header_base_y = (hn as Node3D).position.y
+
+# Finds the parts of the four track pods that move: sprocket, idlers, rollers and the cleat rings.
+func _setup_tracks(inst: Node3D, sc: float) -> void:
+	track_pitch = TRACK_PITCH * sc
+	for tag in TRACK_TAGS:
+		var ring: Array = []
+		for j in TRACK_VARIANTS:
+			var cn = inst.find_child("Track_Cleats_%s_%d" % [tag, j], true, false)
+			if cn is Node3D:
+				ring.append(cn)
+		if not ring.is_empty():
+			track_cleats.append(ring)
+		for part in TRACK_PARTS:
+			var pn = inst.find_child(str(part[0]) + tag, true, false)
+			if pn is Node3D:
+				track_spin.append({"node": pn, "radius": float(part[1]) * sc, "angle": 0.0})
+	_show_cleat_ring(0)
+
+# Shows one of the shifted cleat rings on every pod and hides the others.
+func _show_cleat_ring(vi: int) -> void:
+	if vi == track_vi:
+		return
+	track_vi = vi
+	for ring in track_cleats:
+		for k in ring.size():
+			(ring[k] as Node3D).visible = (k == vi)
 
 # Raise or lower the tool (a combine's header). It moves smoothly in update_from().
 func set_raised(on: bool) -> void:
@@ -269,7 +277,7 @@ func is_down() -> bool:
 
 func update_from(v: Dictionary, dt: float = 0.0) -> void:
 	if attach == null:
-		_build_builtin()
+		_build_base()
 	var vid := str(v.get("vehicle", "tractor"))
 	if vid != cur_vehicle:
 		_apply_vehicle(vid)
@@ -309,6 +317,13 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 		steer_vis = lerpf(steer_vis, want, minf(1.0, dt * 8.0))
 		for p in steer_pivots:
 			p.rotation.y = -steer_vis if rear_steer else steer_vis
+		if not track_spin.is_empty():
+			for ts in track_spin:
+				ts["angle"] = fposmod(float(ts["angle"]) + sp * dt / float(ts["radius"]), TAU)
+				ts["node"].rotation.x = -float(ts["angle"])
+			track_dist += sp * dt * TRACK_VISUAL
+			var phase := fposmod(track_dist / track_pitch, 1.0)
+			_show_cleat_ring(int(phase * float(TRACK_VARIANTS)) % TRACK_VARIANTS)
 		# The reel turns while the header is down and the machine is moving.
 		if reel_node != null and lift < 0.5 and absf(sp) > 0.05:
 			reel_angle = fposmod(reel_angle + 4.0 * dt, TAU)
