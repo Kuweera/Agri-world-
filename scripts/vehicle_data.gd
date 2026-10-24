@@ -33,6 +33,8 @@ const VEHICLES := {
 		"work_offset": 1.8,      # implement works this far behind the tractor
 		"model_path": "res://assets/models/Tractor.glb",
 		"model_scale": 0.5,
+		"hit_len": 2.3,          # footprint for collisions between machines (game units)
+		"hit_wid": 1.4,
 		"paint": Color(0.18, 0.5, 0.2),
 	},
 	"tractor_heavy": {
@@ -51,6 +53,8 @@ const VEHICLES := {
 		"work_offset": 2.1,
 		"model_path": "res://assets/models/Tractor_Heavy.glb",
 		"model_scale": 0.4,
+		"hit_len": 3.3,          # footprint for collisions between machines (game units)
+		"hit_wid": 1.4,
 		"paint": Color(0.7, 0.12, 0.1),
 	},
 	"tractor_tracked": {
@@ -70,13 +74,15 @@ const VEHICLES := {
 		"model_path": "res://assets/models/Tractor_Heavy_Tracked.glb",
 		"model_scale": 0.4,
 		"tracked": true,         # four track pods: they do not spin like wheels
+		"hit_len": 3.3,          # footprint for collisions between machines (game units)
+		"hit_wid": 1.5,
 		"paint": Color(0.1, 0.25, 0.6),
 	},
 	"combine_small": {
 		"id": "combine_small",
 		"name": "Small Combine Harvester",
 		"type": "harvester",
-		"price": 12000,
+		"price": 0,              # free: the combine you start with
 		"power_hp": 120,
 		"max_speed": 3.0,
 		"reverse_factor": 0.4,
@@ -85,11 +91,14 @@ const VEHICLES := {
 		"fuel_capacity": 60.0,
 		"fuel_use": 0.4,
 		"fuel_price": 2,
-		"work_offset": -2.6,     # negative: the header cuts this far AHEAD of the machine
+		"work_offset": -2.8,     # negative: the header cuts this far AHEAD of the machine
 		"work_width": 3,         # tiles cut per pass
 		"model_path": "res://assets/models/Combine.glb",
 		"model_scale": 0.7,
 		"rear_steer": true,
+		"hit_len": 6.0,          # footprint for collisions between machines (game units)
+		"hit_wid": 1.8,
+		"park_wid": 3.0,         # room needed when parked (header sticks out)
 		"paint": Color(0.9, 0.75, 0.1),
 	},
 	"combine_large": {
@@ -105,12 +114,38 @@ const VEHICLES := {
 		"fuel_capacity": 100.0,
 		"fuel_use": 0.6,
 		"fuel_price": 2,
-		"work_offset": -3.9,
+		"work_offset": -3.5,
 		"work_width": 5,
 		"model_path": "res://assets/models/Combine_Large.glb",
 		"model_scale": 0.6,
 		"rear_steer": true,
+		"hit_len": 7.6,          # footprint for collisions between machines (game units)
+		"hit_wid": 2.1,
+		"park_wid": 3.2,         # room needed when parked (header sticks out)
 		"paint": Color(0.15, 0.45, 0.3),
+	},
+	"combine_large": {
+		"id": "combine_large_b",
+		"name": "Tracked Combine Harvester",
+		"type": "harvester",
+		"price": 52000,
+		"power_hp": 400,
+		"max_speed": 3.9,
+		"reverse_factor": 0.4,
+		"accel": 3.6,
+		"turn_rate": 1.0,
+		"fuel_capacity": 140.0,
+		"fuel_use": 0.8,
+		"fuel_price": 2,
+		"work_offset": -3.9,
+		"work_width": 5,
+		"model_path": "res://assets/models/Combine_Large_B.glb",
+		"model_scale": 0.62,
+		"rear_steer": true,
+		"hit_len": 8.4,          # footprint for collisions between machines (game units)
+		"hit_wid": 2.2,
+		"park_wid": 3.2,         # room needed when parked (header sticks out)
+		"paint": Color(0.95, 0.8, 0.1),
 	},
 }
 
@@ -134,11 +169,10 @@ static func ids_of_type(vehicle_type: String) -> Array:
 
 # Order the Tool button cycles through. Every id after "none" is in implement_data.gd.
 const IMPLEMENT_ORDER := ["none", "plough", "plough_3", "plough_5", "seeder", "seeder_3",
-	"seeder_5", "spreader", "spreader_3", "spreader_5", "harvester", "harvester_3"]
+	"seeder_5", "spreader", "spreader_3", "spreader_5"]
 
 const IMPLEMENTS := {
 	"none": {"name": "None"},
 	"plough": {"name": "Plough"},
 	"seeder": {"name": "Seeder"},
-	"harvester": {"name": "Harvester"},
 }
