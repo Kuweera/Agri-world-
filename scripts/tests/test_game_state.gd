@@ -25,6 +25,7 @@ const ShopCatalog := preload("res://scripts/shop_catalog.gd")
 const MachineModels := preload("res://scripts/machine_models.gd")
 const MachineryShop := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
+const ParkingScript := preload("res://scripts/parking.gd")
 
 var failures := 0
 
@@ -677,7 +678,8 @@ func _init() -> void:
 	_check(float(dr_heavy["max_speed"]) >= dr_top * VehicleModel.MIN_SPEED_FACTOR - 0.0001, "slowdown has a floor")
 	_check(float(dr_heavy["fuel_use"]) > float(dr_cfg["fuel_use"]), "heavy load burns more fuel")
 	_check(float(dr_heavy["accel"]) < float(dr_cfg["accel"]), "heavy load accelerates slower")
-	var dr_light: Dictionary = VehicleData.VEHICLES["tractor_light"]
+	var dr_light: Dictionary = VehicleData.VEHICLES["tractor"].duplicate()
+	dr_light["power_hp"] = 20
 	var dr_weak: Dictionary = VehicleModel.loaded_config(dr_light, "plough_5")
 	var dr_floor: float = float(dr_light["max_speed"]) * VehicleModel.MIN_SPEED_FACTOR
 	_check(absf(float(dr_weak["max_speed"]) - dr_floor) < 0.0001, "weak tractor crawls with the heaviest plough")
@@ -930,7 +932,7 @@ func _init() -> void:
 	sh_s.money = 2000
 	_check(sh_s.buy("plough_3") == "" and sh_s.money == 500 and sh_s.owns("plough_3"), "buy the wide plough")
 	_check(sh_s.buy("plough_3") == "Already owned" and sh_s.money == 500, "cannot buy a machine twice")
-	_check(sh_s.buy("combine_small") == "Coming soon", "combines are not for sale yet")
+	_check(sh_s.buy("combine_small") == "Not enough money", "a combine needs the money like any machine")
 	_check(sh_s.buy("bogus") == "Unknown machine", "unknown machine cannot be bought")
 	sh_s.tractor["implement"] = "plough"
 	sh_s.next_implement()
@@ -946,14 +948,16 @@ func _init() -> void:
 	_check(int(sh_s.vehicle_cfg()["power_hp"]) == 160 and float(sh_s.tractor["fuel"]) == 5.0, "heavy tractor settings, same fuel")
 	sh_s.money = 500
 	_check(sh_s.refuel() == "" and float(sh_s.tractor["fuel"]) == 40.0, "refuel fills the heavy tractor's bigger tank")
-	sh_s.money = 3000
-	_check(sh_s.buy("tractor_light") == "" and sh_s.select_vehicle("tractor_light") == "", "switch to the compact tractor")
-	_check(float(sh_s.tractor["fuel"]) == 12.0, "a smaller tank caps the fuel")
-	_check(sh_s.select_vehicle("combine_small") == "Not owned", "a combine cannot be driven yet")
+	sh_s.money = 30000
+	_check(sh_s.buy("tractor_tracked") == "" and sh_s.select_vehicle("tractor_tracked") == "", "switch to the tracked tractor")
+	_check(float(sh_s.tractor["fuel"]) == 40.0, "a bigger tank keeps the fuel")
+	_check(sh_s.select_vehicle("tractor") == "" and float(sh_s.tractor["fuel"]) == 20.0, "a smaller tank caps the fuel")
+	_check(sh_s.select_vehicle("tractor_tracked") == "", "back to the tracked tractor")
+	_check(sh_s.select_vehicle("combine_small") == "Not owned", "cannot drive a combine you do not own")
 	var sh_json = JSON.parse_string(JSON.stringify(sh_s.to_dict()))
 	var sh_b = GameState.new()
 	_check(sh_b.from_dict(sh_json) == "", "save with bought machines loads")
-	_check(sh_b.owns("plough_3") and sh_b.owns("tractor_heavy") and sh_b.tractor["vehicle"] == "tractor_light", "owned machines and the chosen tractor survive")
+	_check(sh_b.owns("plough_3") and sh_b.owns("tractor_heavy") and sh_b.tractor["vehicle"] == "tractor_tracked", "owned machines and the chosen tractor survive")
 	var sh_v3: Dictionary = GameState.new().to_dict()
 	sh_v3["schema_version"] = 3
 	sh_v3.erase("owned")
@@ -977,7 +981,14 @@ func _init() -> void:
 	sh_bad = GameState.new().to_dict()
 	sh_bad["owned"].append("combine_small")
 	sh_bad["tractor"]["vehicle"] = "combine_small"
-	_check(GameState.new().from_dict(sh_bad) != "", "rejects a combine as the driven tractor")
+	_check(GameState.new().from_dict(sh_bad) == "", "a combine can be the driven machine")
+	sh_bad = GameState.new().to_dict()
+	sh_bad["owned"].append("tractor_light")
+	sh_bad["tractor"]["vehicle"] = "tractor_light"
+	sh_bad["money"] = 100
+	var sh_old = GameState.new()
+	_check(sh_old.from_dict(sh_bad) == "", "a save with the removed compact tractor loads")
+	_check(not sh_old.owns("tractor_light") and sh_old.tractor["vehicle"] == "tractor" and sh_old.money == 1900, "the compact tractor is refunded and the farm tractor takes over")
 	# What the shop shows
 	var sh_all := {}
 	for sh_c in ShopCatalog.CATEGORIES:
@@ -996,7 +1007,8 @@ func _init() -> void:
 	_check(sh_p["stats"].contains("3 tiles wide") and sh_p["stats"].contains(" hp") and sh_p["stats"].contains("top speed"), "implement stats text")
 	_check(ShopCatalog.entry("tractor_heavy", sh_gs)["stats"].contains("160 hp"), "vehicle stats text")
 	_check(ShopCatalog.entry("spreader", sh_gs)["stats"].contains("fertilizer per tile"), "spreader stats mention fertilizer")
-	_check(ShopCatalog.entry("combine_large", sh_gs)["can_buy"] == "Coming soon", "combine entry says coming soon")
+	_check(ShopCatalog.entry("combine_large", sh_gs)["can_buy"] == "Not enough money", "combine entry can be bought")
+	_check(not VehicleData.VEHICLES.has("tractor_light") and VehicleData.VEHICLES.has("tractor_tracked"), "tractor lineup: farm, heavy, tracked")
 	_check(ShopCatalog.entry("bogus", sh_gs)["name"] == "", "unknown id gives an empty entry")
 	# Preview models (the .glb files, or the built-in fallback)
 	_check(MachineModels.glb_scene("") == null and MachineModels.glb_scene("res://nope.glb") == null, "missing model file gives no scene")
@@ -1006,7 +1018,7 @@ func _init() -> void:
 		_check(sh_n != null and sh_n is Node3D, "%s has a preview model" % sh_mid)
 		if sh_n != null:
 			sh_n.free()
-	for sh_vid in ["tractor", "tractor_light", "tractor_heavy"]:
+	for sh_vid in ["tractor", "tractor_heavy", "tractor_tracked"]:
 		var sh_t = MachineModels.instance_for(sh_vid)
 		_check(sh_t != null and sh_t is Node3D, "%s has a preview model" % sh_vid)
 		if sh_t != null:
@@ -1053,12 +1065,12 @@ func _init() -> void:
 	_check(MachineModels.bounds_of(fv_empty).size.x > 0.0, "empty node gets a default box")
 	fv_empty.free()
 	var fv_tv = TractorViewScript.new()
-	var fv_tr: Dictionary = {"x": 1.0, "z": 2.0, "heading": 0.5, "speed": 1.0, "implement": "plough_3", "vehicle": "tractor_light"}
+	var fv_tr: Dictionary = {"x": 1.0, "z": 2.0, "heading": 0.5, "speed": 1.0, "implement": "plough_3", "vehicle": "tractor"}
 	fv_tv.update_from(fv_tr, 0.1)
 	fv_tv.update_from(fv_tr, 0.1)
-	var fv_has_tractor: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["tractor_light"]["model_path"])) != null
+	var fv_has_tractor: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["tractor"]["model_path"])) != null
 	_check((fv_tv.glb_vehicle != null) == fv_has_tractor, "field tractor uses the real model when its file loads")
-	_check(fv_tv.cur_vehicle == "tractor_light", "field view remembers the vehicle")
+	_check(fv_tv.cur_vehicle == "tractor", "field view remembers the vehicle")
 	_check(fv_tv.body_mi.visible == (fv_tv.glb_vehicle == null), "built-in body hides while the real tractor shows")
 	_check(fv_tv.wheels.size() == 4, "field tractor has four wheels to spin")
 	var fv_has_impl: bool = MachineModels.glb_scene(str(ImplementData.ITEMS["plough_3"]["model_path"])) != null
@@ -1077,6 +1089,69 @@ func _init() -> void:
 	fv_tv.update_from(fv_tr, 0.1)
 	_check(fv_tv.glb_vehicle == null and fv_tv.body_mi.visible, "unknown vehicle falls back to the built-in tractor")
 	fv_tv.free()
+
+	# --- Lift, tracks, combines and the yard ---
+	var lf_tv = TractorViewScript.new()
+	var lf_tr: Dictionary = {"x": 0.0, "z": 0.0, "heading": 0.0, "speed": 0.0, "implement": "plough", "vehicle": "tractor"}
+	lf_tv.update_from(lf_tr, 0.05)
+	_check(not lf_tv.is_down() and lf_tv.lift == 1.0, "the tool starts raised")
+	lf_tv.set_raised(false)
+	for lf_i in 20:
+		lf_tv.update_from(lf_tr, 0.05)
+	_check(lf_tv.is_down() and lf_tv.lift == 0.0, "the tool comes down in about half a second")
+	var lf_low_y: float = lf_tv.attach.position.y
+	lf_tv.set_raised(true)
+	lf_tv.update_from(lf_tr, 0.1)
+	_check(lf_tv.attach.position.y > lf_low_y and not lf_tv.is_down(), "raising lifts the tool off the ground")
+	lf_tr["vehicle"] = "tractor_tracked"
+	lf_tv.update_from(lf_tr, 0.1)
+	var lf_has_tracks: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["tractor_tracked"]["model_path"])) != null
+	_check(lf_tv.cur_vehicle == "tractor_tracked", "field view takes the tracked tractor")
+	_check(lf_tv.wheels.is_empty() == lf_has_tracks, "track pods do not spin like wheels")
+	lf_tr["vehicle"] = "combine_small"
+	lf_tr["implement"] = "plough_3"
+	lf_tv.update_from(lf_tr, 0.1)
+	var lf_has_comb: bool = MachineModels.glb_scene(str(VehicleData.VEHICLES["combine_small"]["model_path"])) != null
+	_check(lf_tv.is_combine == lf_has_comb and lf_tv.rear_steer == lf_has_comb, "the combine view steers with its rear wheels")
+	_check(not lf_tv.glb_impl.has("plough_3") or not lf_tv.glb_impl["plough_3"].visible, "a combine shows no tractor tool")
+	lf_tv.free()
+
+	var cb_s = GameState.new()
+	cb_s.money = 50000
+	_check(cb_s.buy("combine_small") == "" and cb_s.select_vehicle("combine_small") == "", "buy and drive a combine")
+	_check(cb_s.is_combine() and cb_s.active_kind() == "harvester" and cb_s.active_implement() == "none", "a combine works with its own header")
+	_check(cb_s.active_width() == 3, "the small combine cuts three tiles")
+	var cb_pose := ParkingScript.start_pose("combine_small")
+	_check(absf(float(cb_s.tractor["x"]) - float(cb_pose["x"])) < 0.001 and absf(float(cb_s.tractor["z"]) - float(cb_pose["z"])) < 0.001, "the machine you take starts in its yard slot")
+	# A ripe field: the header cuts ahead of the combine, three tiles across.
+	for cb_i in cb_s.tiles.size():
+		cb_s.tiles[cb_i]["state"] = "growing"
+		cb_s.tiles[cb_i]["crop"] = "maize"
+		cb_s.tiles[cb_i]["planted_at"] = -100000.0
+	var cb_cfg: Dictionary = VehicleModel.loaded_config(cb_s.vehicle_cfg(), cb_s.active_implement())
+	cb_s.tractor["x"] = -3.0
+	cb_s.tractor["heading"] = 0.5 * PI
+	cb_s.tractor["speed"] = 2.0
+	cb_s.tractor["z"] = FarmLayout.row_z(3)
+	var cb_res: String = cb_s.work_with_tractor(cb_cfg, 0.0, "maize")
+	_check(cb_res == "" and cb_s.last_worked_tiles.size() == 3, "the combine header cuts three tiles ahead of it")
+	var cb_ahead := FarmLayout.world_to_tile(-3.0 + 2.6, FarmLayout.row_z(3))
+	_check(cb_s.last_worked_tiles.has(cb_ahead), "the header works ahead of the combine, not behind it")
+	var cb_stopped = GameState.new()
+	cb_stopped.money = 50000
+	cb_stopped.buy("combine_large")
+	cb_stopped.select_vehicle("combine_large")
+	_check(cb_stopped.active_width() == 5 and float(cb_stopped.vehicle_cfg()["work_offset"]) < 0.0, "the large combine cuts five tiles with its header ahead")
+	for cb_id in VehicleData.VEHICLES:
+		_check(ParkingScript.has_slot(cb_id), "%s has a place in the yard" % cb_id)
+		var cb_slot: Dictionary = ParkingScript.start_pose(cb_id)
+		var cb_in_yard: bool = float(cb_slot["z"]) >= 4.5 and absf(float(cb_slot["x"])) <= VehicleData.DRIVE_BOUNDS and float(cb_slot["z"]) <= VehicleData.DRIVE_BOUNDS
+		_check(cb_in_yard, "%s waits in the yard, clear of the field" % cb_id)
+		var cb_hidden := false
+		for cb_r in VehicleData.OBSTACLES:
+			if cb_r.has_point(Vector2(float(cb_slot["x"]), float(cb_slot["z"]))):
+				cb_hidden = true
+		_check(not cb_hidden, "%s does not start inside the farmhouse" % cb_id)
 
 	# --- Implement models: sized from the catalogue ---
 	var im_ids: Array = ImplementData.ITEMS.keys()
