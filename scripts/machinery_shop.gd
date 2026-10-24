@@ -54,6 +54,10 @@ func _init() -> void:
 	head.add_child(title)
 	money_label = _label("", FONT)
 	head.add_child(money_label)
+	# TEST ONLY: remove this button (and _on_test_cash) before release.
+	var cash_btn := _button("+5000 test")
+	cash_btn.pressed.connect(_on_test_cash)
+	head.add_child(cash_btn)
 	var close_btn := _button("Close")
 	close_btn.pressed.connect(close)
 	head.add_child(close_btn)
@@ -208,6 +212,11 @@ func _on_item(index: int) -> void:
 		selected = str(ids[index])
 		_show_entry()
 
+func _on_test_cash() -> void:
+	state.money += 5000
+	refresh()
+	changed.emit()
+
 func _on_buy() -> void:
 	var err: String = state.buy(selected)
 	refresh()
@@ -252,7 +261,7 @@ func _show_preview(id: String) -> void:
 		var mid: Vector3 = box.get_center()
 		node.position = Vector3(-mid.x, 0.0, -mid.z)
 		center = Vector3(0, mid.y, 0)
-		dist = maxf(2.0, box.size.length() * 0.5 * 2.2)
+		dist = maxf(1.5, box.size.length() * 0.5 * 1.5)
 		preview_pivot.add_child(node)
 	var pos := center + Vector3(0, dist * 0.3, dist)
 	preview_cam.transform = Transform3D(Basis.looking_at(center - pos, Vector3.UP), pos)
