@@ -542,29 +542,29 @@ func _init() -> void:
 	_check(sb2.from_dict(sbd) == "" and sb2.tiles[1]["state"] == "stubble", "stubble survives save and load")
 
 	# --- Mesh builder, tiles, crops, scenery: finite, bounded and within triangle budgets ---
-	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.5) == 1 and CropModels.stage_for(1.0) == 2, "crop stages by progress")
+	_check(CropModels.stage_for(0.0) == 0 and CropModels.stage_for(0.3) == 1 and CropModels.stage_for(0.5) == 2 and CropModels.stage_for(0.8) == 3 and CropModels.stage_for(0.99) == 3 and CropModels.stage_for(1.0) == 4, "crop stages by progress")
 
 	# --- Crop stages come from crop_data.gd and agree with the 3D models ---
 	for cs_id in CropData.CROPS:
 		var cs_list: Array = CropStages.stages_for(cs_id)
-		var cs_ok: bool = cs_list.size() == 3 and absf(float(cs_list[0]["from"])) < 0.0001
+		var cs_ok: bool = cs_list.size() == CropModels.STAGE_COUNT and absf(float(cs_list[0]["from"])) < 0.0001
 		cs_ok = cs_ok and absf(float(cs_list[cs_list.size() - 1]["from"]) - 1.0) < 0.0001
 		for cs_i in range(1, cs_list.size()):
 			if float(cs_list[cs_i]["from"]) <= float(cs_list[cs_i - 1]["from"]):
 				cs_ok = false
-		_check(cs_ok, "crop %s has 3 ordered stages from 0.0 to 1.0" % cs_id)
+		_check(cs_ok, "crop %s has %d ordered stages from 0.0 to 1.0" % [cs_id, CropModels.STAGE_COUNT])
 		var cs_agree := true
 		for cs_p in 101:
 			var cs_prog := float(cs_p) / 100.0
 			if CropStages.get_stage_index(cs_id, cs_prog) != CropModels.stage_for(cs_prog):
 				cs_agree = false
 		_check(cs_agree, "crop %s stages match the 3D models" % cs_id)
-	_check(CropStages.get_stage_index("maize", 0.33) == 0, "maize stage at 33%")
-	_check(CropStages.get_stage_index("maize", 0.34) == 1, "maize stage at 34%")
-	_check(CropStages.get_stage_index("maize", 0.99) == 1, "maize stage at 99%")
-	_check(CropStages.get_stage_index("maize", 1.0) == 2, "maize stage at 100%")
+	_check(CropStages.get_stage_index("maize", 0.19) == 0, "maize stage at 19%")
+	_check(CropStages.get_stage_index("maize", 0.2) == 1, "maize stage at 20%")
+	_check(CropStages.get_stage_index("maize", 0.99) == 3, "maize stage at 99%")
+	_check(CropStages.get_stage_index("maize", 1.0) == 4, "maize stage at 100%")
 	_check(CropStages.get_stage_name("beans", 0.5) == "growing", "beans stage name")
-	_check(CropStages.get_stage_index("other", 1.0) == 2, "unknown crop uses defaults")
+	_check(CropStages.get_stage_index("other", 1.0) == 4, "unknown crop uses defaults")
 	_check(CropStages.get_stage_name("other", 0.0) == "sprout", "unknown crop stage name")
 
 	# --- Graphics quality profiles (sun shadows, sky) ---
@@ -1173,14 +1173,33 @@ func _init() -> void:
 			var py_o: Dictionary = py_s.fleet[py_ids[py_b]]
 			_check(Hitbox.penetration(Hitbox.of_machine(py_m), Hitbox.of_machine(py_o)) <= 0.0, "%s and %s do not overlap" % [py_ids[py_a], py_ids[py_b]])
 
-	# Machines are solid: one cannot be driven into another, but can back away.
+	# Machines push each other: a moving one shoves a parked one aside and keeps going.
 	var hb_a: Dictionary = {"x": 0.0, "z": 0.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
 	var hb_b: Dictionary = {"x": 0.0, "z": 4.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
 	var hb_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	for hb_i in 60:
 		VehicleModel.step(hb_a, hb_cfg, 1.0, 0.0, 0.05, [hb_b])
-	_check(float(hb_a["z"]) > 0.5 and float(hb_a["z"]) < 2.0 and bool(hb_a["_blocked"]), "a tractor stops before the one in front")
-	_check(Hitbox.penetration(Hitbox.of_machine(hb_a), Hitbox.of_machine(hb_b)) <= 0.0, "the two tractors never overlap")
+	_check(float(hb_a["z"]) > 1.5 and not bool(hb_a["_blocked"]), "a tractor drives on into a parked one")
+	_check(float(hb_b["z"]) > 4.2, "the parked tractor is pushed along")
+	_check(Hitbox.penetration(Hitbox.of_machine(hb_a), Hitbox.of_machine(hb_b)) <= 0.05, "pushed tractors do not stay overlapped")
+	# The stronger moving machine pushes the weaker one aside; the weaker one is not stopped.
+	var hv_a: Dictionary = {"x": 0.0, "z": 0.0, "heading": 0.0, "speed": 0.0, "fuel": 40.0, "hours": 0.0, "implement": "none", "vehicle": "tractor_heavy"}
+	var hv_b: Dictionary = {"x": 0.0, "z": 4.0, "heading": 0.0, "speed": 1.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	var hv_cfg: Dictionary = VehicleData.VEHICLES["tractor_heavy"]
+	for hb_i in 60:
+		VehicleModel.step(hv_a, hv_cfg, 1.0, 0.0, 0.05, [hv_b])
+	_check(float(hv_a["z"]) > 2.0 and float(hv_b["z"]) > 4.2, "the stronger tractor pushes the weaker moving one")
+	_check(absf(float(hv_b["speed"]) - 1.0) < 0.001, "the pushed tractor keeps working (its speed is untouched)")
+	# A machine against the farmhouse cannot be pushed into it.
+	var hh_a: Dictionary = {"x": 0.0, "z": 3.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	var hh_b: Dictionary = {"x": 0.0, "z": 4.6, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
+	for hb_i in 80:
+		VehicleModel.step(hh_a, hb_cfg, 1.0, 0.0, 0.05, [hh_b])
+	var hh_in := false
+	for hh_r in VehicleData.OBSTACLES:
+		if hh_r.has_point(Vector2(float(hh_b["x"]), float(hh_b["z"]))) or hh_r.has_point(Vector2(float(hh_a["x"]), float(hh_a["z"]))):
+			hh_in = true
+	_check(not hh_in, "machines are never pushed into the farmhouse")
 	var hb_z: float = hb_a["z"]
 	for hb_i in 20:
 		VehicleModel.step(hb_a, hb_cfg, -1.0, 0.0, 0.05, [hb_b])
@@ -1298,7 +1317,7 @@ func _init() -> void:
 			_check(tn > 0 and tn % 3 == 0 and tn / 3 < 500, "tile %s v%d builds (%d triangles)" % [kind, tv, tn / 3])
 			_check(tb.size.is_finite() and tb.size.x < 1.6 and tb.size.z < 1.6 and tb.size.y < 0.4, "tile %s v%d stays inside its cell" % [kind, tv])
 	for cid in ["maize", "beans", "other"]:
-		for stg in 3:
+		for stg in CropModels.STAGE_COUNT:
 			for det in 2:
 				var cm: ArrayMesh = CropModels.build(cid, stg, 0, det)
 				var carr = cm.surface_get_arrays(0)
@@ -1307,9 +1326,9 @@ func _init() -> void:
 				var budget := 450 if det == 0 else 900
 				_check(nv > 0 and nv % 3 == 0 and carr[Mesh.ARRAY_COLOR].size() == nv and carr[Mesh.ARRAY_NORMAL].size() == nv, "crop %s stage %d detail %d builds (%d triangles)" % [cid, stg, det, nv / 3])
 				_check(nv / 3 <= budget, "crop %s stage %d detail %d within triangle budget" % [cid, stg, det])
-				_check(cb.size.is_finite() and cb.size.x < 2.0 and cb.size.z < 2.0 and cb.size.y < 1.8, "crop %s stage %d detail %d has sane size" % [cid, stg, det])
-	var maize_ripe: ArrayMesh = CropModels.build("maize", 2, 0, 1)
-	var maize_young: ArrayMesh = CropModels.build("maize", 1, 0, 1)
+				_check(cb.size.is_finite() and cb.size.x < 2.6 and cb.size.z < 2.2 and cb.size.y < 1.9, "crop %s stage %d detail %d has sane size" % [cid, stg, det])
+	var maize_ripe: ArrayMesh = CropModels.build("maize", 4, 0, 1)
+	var maize_young: ArrayMesh = CropModels.build("maize", 2, 0, 1)
 	_check(maize_ripe.get_aabb().size.y > maize_young.get_aabb().size.y, "ripe maize is taller than growing maize")
 
 	var holder := Node3D.new()
