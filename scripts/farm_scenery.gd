@@ -5,7 +5,7 @@ extends RefCounted
 
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 
-const LAND_HALF := 12.0
+const LAND_HALF := 20.0
 
 var blobs: MeshInstance3D
 
@@ -47,8 +47,8 @@ func set_blob_visible(on: bool) -> void:
 func _land_color(x: float, z: float, noise: FastNoiseLite) -> Color:
 	var n := noise.get_noise_2d(x * 2.0, z * 2.0) * 0.5 + 0.5
 	var c := Color(0.30, 0.50, 0.17).lerp(Color(0.42, 0.58, 0.22), n)
-	var d := Vector2(x, z).distance_to(Vector2(0.0, 5.0))
-	var yard := 1.0 - smoothstep(2.5, 5.0, d)
+	var d := Vector2(x * 0.6, z - 10.5).length()   # a wide dirt yard south of the house
+	var yard := 1.0 - smoothstep(6.0, 9.0, d)
 	var path := 0.0
 	if z > 1.5 and z < 6.0:
 		path = 1.0 - smoothstep(0.6, 1.4, absf(x))
@@ -109,7 +109,7 @@ func _fence() -> ArrayMesh:
 	var wood := Color(0.5, 0.35, 0.18)
 	var rail := Color(0.6, 0.44, 0.25)
 	var hh := LAND_HALF
-	for k in 13:
+	for k in int(hh) + 1:
 		var t := -hh + 2.0 * float(k)
 		mb.add_box(Vector3(t, 0.45, -hh), Vector3(0.16, 0.9, 0.16), wood)
 		mb.add_box(Vector3(t, 0.45, hh), Vector3(0.16, 0.9, 0.16), wood)
@@ -126,11 +126,11 @@ func _fence() -> ArrayMesh:
 
 func _tree_list() -> Array:
 	var list: Array = []
-	for i in 18:
-		var a := TAU * float(i) / 18.0 + _h(i + 3) * 0.3
-		var r := 18.0 + 9.0 * _h(i + 40)
+	for i in 24:
+		var a := TAU * float(i) / 24.0 + _h(i + 3) * 0.3
+		var r := 26.0 + 9.0 * _h(i + 40)
 		var p := Vector2(cos(a) * r, sin(a) * r)
-		if maxf(absf(p.x), absf(p.y)) < 15.0:
+		if maxf(absf(p.x), absf(p.y)) < 23.0:
 			p *= 1.3
 		list.append({"p": p, "s": 0.8 + 0.6 * _h(i + 80), "c": i})
 	return list

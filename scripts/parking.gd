@@ -9,9 +9,9 @@ const Hitbox := preload("res://scripts/hitbox.gd")
 const FIELD_FACING := PI
 const HOUSE_CENTRE := Vector2(0.0, 7.5)
 # The yard: machine middles stay in here (the farmhouse is cut out by VehicleData.OBSTACLES).
-const YARD_X := 10.3
+const YARD_X := 17.0
 const YARD_Z0 := 4.8
-const YARD_Z1 := 10.4
+const YARD_Z1 := 17.0
 # The ploughed field, with a little room round it (x, z, width, depth).
 const FIELD_RECT := Rect2(-6.8, -10.8, 13.6, 13.4)
 const GAP := 0.15      # clear space kept between parked machines
@@ -33,8 +33,8 @@ static func _search(id: String, others: Array, yard_only: bool) -> Dictionary:
 	var best_score := 1.0e9
 	var heads := [PI, 0.5 * PI, 1.5 * PI, 0.0]
 	var z_from := int((YARD_Z0 if yard_only else -YARD_Z1) * 10.0)
-	var xi := -103
-	while xi <= 103:
+	var xi := -int(YARD_X * 10.0)
+	while xi <= int(YARD_X * 10.0):
 		var zi := z_from
 		while zi <= int(YARD_Z1 * 10.0):
 			var x := float(xi) / 10.0

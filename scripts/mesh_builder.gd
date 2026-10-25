@@ -6,6 +6,8 @@ extends RefCounted
 var verts := PackedVector3Array()
 var norms := PackedVector3Array()
 var cols := PackedColorArray()
+var uvs := PackedVector2Array()
+var use_uv := false   # set by add_card; then build() includes the UVs
 
 static func vc_material(unshaded: bool = false) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -40,13 +42,39 @@ static func textured_material(path: String, uv_scale: float, gain: float) -> Sta
 	m.albedo_color = Color(gain, gain, gain)
 	return m
 
+# Crop cards: a grey leaf/pod/cob atlas (alpha = shape) tinted by vertex colours.
+# Alpha scissor is cheap on weak GPUs. If the atlas is missing the cards are plain coloured quads.
+static func card_material(path: String) -> StandardMaterial3D:
+	var m := vc_material()
+	if not ResourceLoader.exists(path):
+		return m
+	var src: Resource = load(path)
+	if src == null or not (src is Texture2D):
+		return m
+	var img: Image = (src as Texture2D).get_image()
+	if img == null or img.is_empty() or img.is_compressed():
+		return m
+	img.generate_mipmaps()
+	m.albedo_texture = ImageTexture.create_from_image(img)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.5
+	return m
+
+# UV rectangle of atlas cell i (4 x 4 grid, index = row * 4 + col), inset a little.
+static func cell_uv(i: int) -> Rect2:
+	var cx := float(i % 4) * 0.25
+	var cy := floorf(float(i) / 4.0) * 0.25
+	return Rect2(cx + 0.004, cy + 0.004, 0.242, 0.242)
+
 static func shade(c: Color, f: float) -> Color:
 	return Color(c.r * f, c.g * f, c.b * f, c.a)
 
 func triangle_count() -> int:
 	return floori(float(verts.size()) / 3.0)
 
-func add_tri(a: Vector3, b: Vector3, c: Vector3, ca: Color, cb: Color, cc: Color) -> void:
+func add_tri(a: Vector3, b: Vector3, c: Vector3, ca: Color, cb: Color, cc: Color,
+		ua: Vector2 = Vector2.ZERO, ub: Vector2 = Vector2.ZERO, uc: Vector2 = Vector2.ZERO) -> void:
 	var n := (b - a).cross(c - a)
 	if n.length_squared() < 0.00000001:
 		return
@@ -60,10 +88,14 @@ func add_tri(a: Vector3, b: Vector3, c: Vector3, ca: Color, cb: Color, cc: Color
 	cols.append(ca)
 	cols.append(cb)
 	cols.append(cc)
+	uvs.append(ua)
+	uvs.append(ub)
+	uvs.append(uc)
 
-func add_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, ca: Color, cb: Color, cc: Color, cd: Color) -> void:
-	add_tri(a, b, c, ca, cb, cc)
-	add_tri(a, c, d, ca, cc, cd)
+func add_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, ca: Color, cb: Color, cc: Color, cd: Color,
+		ua: Vector2 = Vector2.ZERO, ub: Vector2 = Vector2.ZERO, uc: Vector2 = Vector2.ZERO, ud: Vector2 = Vector2.ZERO) -> void:
+	add_tri(a, b, c, ca, cb, cc, ua, ub, uc)
+	add_tri(a, c, d, ca, cc, cd, ua, uc, ud)
 
 func add_flat_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color) -> void:
 	add_quad(a, b, c, d, col, col, col, col)
@@ -130,6 +162,31 @@ func add_diamond(center: Vector3, u: Vector3, v: Vector3, c_base: Color, c_tip: 
 	var mid := c_base.lerp(c_tip, 0.5)
 	add_quad(center - u, center + v, center + u, center - v, c_base, mid, c_tip, mid)
 
+# A textured leaf/pod card along a list of points (base first), like add_ribbon but with UVs.
+# The picture runs from the bottom of the atlas cell (first point) to its top (last point).
+# `side` is the direction the card is wide in; widths has one entry per point.
+func add_card(points: Array, widths: Array, side: Vector3, cell: int, c0: Color, c1: Color) -> void:
+	var n := points.size()
+	if n < 2:
+		return
+	use_uv = true
+	var r := cell_uv(cell)
+	for i in n - 1:
+		var t0 := float(i) / float(n - 1)
+		var t1 := float(i + 1) / float(n - 1)
+		var p0: Vector3 = points[i]
+		var p1: Vector3 = points[i + 1]
+		var hw0: float = float(widths[i]) * 0.5
+		var hw1: float = float(widths[i + 1]) * 0.5
+		var col0 := c0.lerp(c1, t0)
+		var col1 := c0.lerp(c1, t1)
+		var y0 := r.position.y + r.size.y * (1.0 - t0)
+		var y1 := r.position.y + r.size.y * (1.0 - t1)
+		var xl := r.position.x
+		var xr := r.position.x + r.size.x
+		add_quad(p0 - side * hw0, p0 + side * hw0, p1 + side * hw1, p1 - side * hw1,
+			col0, col0, col1, col1, Vector2(xl, y0), Vector2(xr, y0), Vector2(xr, y1), Vector2(xl, y1))
+
 func build() -> ArrayMesh:
 	var m := ArrayMesh.new()
 	if verts.size() == 0:
@@ -139,5 +196,7 @@ func build() -> ArrayMesh:
 	arr[Mesh.ARRAY_VERTEX] = verts
 	arr[Mesh.ARRAY_NORMAL] = norms
 	arr[Mesh.ARRAY_COLOR] = cols
+	if use_uv and uvs.size() == verts.size():
+		arr[Mesh.ARRAY_TEX_UV] = uvs
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return m

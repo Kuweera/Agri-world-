@@ -46,3 +46,18 @@ static func circle_hits_rect(c: Vector3, rect: Rect2) -> bool:
 	var cx := clampf(c.x, rect.position.x, rect.position.x + rect.size.x)
 	var cz := clampf(c.y, rect.position.y, rect.position.y + rect.size.y)
 	return Vector2(c.x - cx, c.y - cz).length() < c.z
+
+# The deepest touch between two footprints: Vector3(nx, nz, depth). (nx, nz) is the unit
+# direction pointing from footprint b towards footprint a. depth <= 0 means clear.
+static func contact(a: Array, b: Array) -> Vector3:
+	var worst := -1000.0
+	var best := Vector2(0.0, 1.0)
+	for ca in a:
+		for cb in b:
+			var d := Vector2(ca.x - cb.x, ca.y - cb.y)
+			var depth: float = ca.z + cb.z - d.length()
+			if depth > worst:
+				worst = depth
+				if d.length() > 0.0001:
+					best = d.normalized()
+	return Vector3(best.x, best.y, worst)

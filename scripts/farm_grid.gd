@@ -24,6 +24,7 @@ var crop_keys: Array = []
 var mesh_cache := {}
 var detail := 1            # crop detail: 0 = lighter, 1 = full
 var mat_vc: StandardMaterial3D
+var mat_crop: StandardMaterial3D   # leaf-card atlas for crops
 var mat_ground: StandardMaterial3D
 var mat_land: StandardMaterial3D
 var cursor: MeshInstance3D
@@ -38,6 +39,7 @@ func _variant(i: int, n: int) -> int:
 
 func _ready() -> void:
 	mat_vc = MeshBuilder.vc_material()
+	mat_crop = MeshBuilder.card_material(CropModels.ATLAS)
 	scenery = FarmSceneryScript.new()
 	mat_ground = MeshBuilder.textured_material(SOIL_TEXTURE, 0.7, 1.25)
 	mat_land = MeshBuilder.textured_material(GRASS_TEXTURE, 0.35, 1.25)
@@ -93,7 +95,7 @@ func _crop_mesh(crop_id: String, stage: int, variant: int) -> ArrayMesh:
 
 func _prebuild_crops() -> void:
 	for crop_id in CropData.CROPS:
-		for stage in 3:
+		for stage in CropModels.STAGE_COUNT:
 			for v in 2:
 				_crop_mesh(crop_id, stage, v)
 
@@ -142,9 +144,10 @@ func refresh_tile(i: int, tile: Dictionary, progress: float, is_selected: bool) 
 		var key := "%s:%d:%d" % [crop_id, stage, detail]
 		if crop == null:
 			crop = MeshInstance3D.new()
-			crop.material_override = mat_vc
+			crop.material_override = mat_crop
+			crop.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			crop.position = Vector3(node.position.x, TileModels.BASE_Y, node.position.z)
-			crop.rotation.y = float(int(_h(i + 11) * 4.0)) * PI / 2.0
+			# No rotation: the rows of plants must run along the soil ridges.
 			add_child(crop)
 			crop_nodes[i] = crop
 		if crop_keys[i] != key:

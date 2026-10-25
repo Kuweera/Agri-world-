@@ -2,7 +2,7 @@ extends RefCounted
 # Crop catalogue. All numbers live here so they are easy to change.
 # grow_seconds is short on purpose for testing.
 # visual.stages: each stage starts at progress "from" (0.0 to 1.0).
-# The thresholds match crop_models.gd stage_for (0.34 and 1.0).
+# The thresholds match crop_models.gd STAGE_FROM (a test checks it). Only "ripe" can be harvested.
 
 # Fertilizer: bought per unit, one unit treats one tile. A fertilized tile gives
 # yield_bonus extra crop (0.5 means +50%) when harvested.
@@ -20,7 +20,9 @@ const CROPS := {
 			"archetype": "cereal",
 			"stages": [
 				{"name": "sprout", "from": 0.0},
-				{"name": "growing", "from": 0.34},
+				{"name": "young", "from": 0.2},
+				{"name": "growing", "from": 0.45},
+				{"name": "maturing", "from": 0.75},
 				{"name": "ripe", "from": 1.0},
 			],
 		},
@@ -36,7 +38,9 @@ const CROPS := {
 			"archetype": "legume_bush",
 			"stages": [
 				{"name": "sprout", "from": 0.0},
-				{"name": "growing", "from": 0.34},
+				{"name": "young", "from": 0.2},
+				{"name": "growing", "from": 0.45},
+				{"name": "maturing", "from": 0.75},
 				{"name": "ripe", "from": 1.0},
 			],
 		},

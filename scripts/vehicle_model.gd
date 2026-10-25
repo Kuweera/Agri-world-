@@ -18,6 +18,12 @@ const MIN_SPEED_FACTOR := 0.2
 const MIN_ACCEL_FACTOR := 0.3
 const FUEL_LOAD_BONUS := 0.5
 
+# Machines push each other. A parked machine resists like this many times its engine power
+# (brakes on), a push is limited per step, and the pusher slows down a little.
+const PARKED_RESISTANCE := 1.6
+const PUSH_STEP_MAX := 0.25
+const PUSH_DRAG := 0.45
+
 # How hard the engine works: horsepower needed divided by horsepower available.
 static func load_ratio(cfg: Dictionary, implement_id: String) -> float:
 	return ImplementData.weight_of(implement_id) * HP_PER_KG / maxf(1.0, float(cfg["power_hp"]))
@@ -39,8 +45,7 @@ static func loaded_config(cfg: Dictionary, implement_id: String) -> Dictionary:
 	out["speed_factor"] = f
 	return out
 
-# others: the machine dictionaries standing in the field. A machine cannot be driven into one;
-# it stops, and v["_blocked"] says so (the autopilot waits a little before giving up).
+# others: the live machine dictionaries of the other machines. Driving into one pushes it.
 static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, delta: float,
 		others: Array = []) -> void:
 	var max_speed: float = cfg["max_speed"]
@@ -73,24 +78,57 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 			nx = old_x
 			nz = old_z
 			v["speed"] = 0.0
-	# Other machines are solid too. A move that makes the overlap worse is undone, so a machine
-	# that already touches another can still drive away from it.
+	# Other machines are pushed, not walls. A moving machine shoves a parked one aside; when two
+	# moving machines meet, the more powerful one pushes the weaker one aside. Nobody stops
+	# working: the pushed one is only moved, the pusher loses a little speed. A machine only
+	# stops (v["_blocked"]) when the other cannot move (house, fence) and it has no way past.
 	v["_blocked"] = false
 	if not others.is_empty():
 		var hl := float(cfg.get("hit_len", 2.0)) * 0.5
 		var hw := float(cfg.get("hit_wid", 1.4)) * 0.5
-		var now_c: Array = Hitbox.circles(nx, nz, float(v["heading"]), hl, hw)
-		var was_c: Array = Hitbox.circles(old_x, old_z, old_heading, hl, hw)
+		var my_power := maxf(1.0, float(cfg.get("power_hp", 75)))
+		var bnd: float = VehicleData.DRIVE_BOUNDS
 		for o in others:
-			var oc: Array = Hitbox.of_machine(o)
-			var pen_new := Hitbox.penetration(now_c, oc)
-			if pen_new > 0.0 and pen_new >= Hitbox.penetration(was_c, oc) - 0.0005:
+			var now_c: Array = Hitbox.circles(nx, nz, float(v["heading"]), hl, hw)
+			var ct: Vector3 = Hitbox.contact(now_c, Hitbox.of_machine(o))
+			if ct.z <= 0.0:
+				continue
+			var push := minf(ct.z + 0.01, PUSH_STEP_MAX)
+			var o_power := maxf(1.0, float(VehicleData.get_vehicle(str(o.get("vehicle", "tractor"))).get("power_hp", 75)))
+			var parked := absf(float(o.get("speed", 0.0))) < 0.1
+			var o_weight := o_power * (PARKED_RESISTANCE if parked else 1.0)
+			# Share of the move that the other machine takes (it moves more when I am stronger).
+			var share_o := my_power / (my_power + o_weight)
+			var ox := float(o["x"]) - ct.x * push * share_o
+			var oz := float(o["z"]) - ct.y * push * share_o
+			var o_free := absf(ox) <= bnd and absf(oz) <= bnd
+			if o_free:
+				for r in VehicleData.OBSTACLES:
+					if r.grow(0.6).has_point(Vector2(ox, oz)):
+						o_free = false
+			if not o_free:
+				share_o = 0.0
+			else:
+				o["x"] = ox
+				o["z"] = oz
+			# What the other one did not take comes back on me.
+			var mine := push * (1.0 - share_o)
+			var back_x := clampf(nx + ct.x * mine, -bnd, bnd)
+			var back_z := clampf(nz + ct.y * mine, -bnd, bnd)
+			var hits_house := false
+			for r in VehicleData.OBSTACLES:
+				if r.has_point(Vector2(back_x, back_z)):
+					hits_house = true
+			if not hits_house:
+				nx = back_x
+				nz = back_z
+			else:
 				nx = old_x
 				nz = old_z
-				v["heading"] = old_heading
-				v["speed"] = 0.0
+			v["speed"] = float(v["speed"]) * (1.0 - PUSH_DRAG * (1.0 - share_o) - 0.1 * share_o)
+			# Only a machine that could not get away is "blocked" (the autopilot waits, then gives up).
+			if share_o <= 0.0 and absf(float(v["speed"])) < 0.3:
 				v["_blocked"] = true
-				break
 	v["x"] = nx
 	v["z"] = nz
 

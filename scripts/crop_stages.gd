@@ -6,7 +6,9 @@ const CropData := preload("res://scripts/crop_data.gd")
 
 const DEFAULT_STAGES := [
 	{"name": "sprout", "from": 0.0},
-	{"name": "growing", "from": 0.34},
+	{"name": "young", "from": 0.2},
+	{"name": "growing", "from": 0.45},
+	{"name": "maturing", "from": 0.75},
 	{"name": "ripe", "from": 1.0},
 ]
 
