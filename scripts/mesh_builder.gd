@@ -59,6 +59,7 @@ static func card_material(path: String) -> StandardMaterial3D:
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	m.alpha_scissor_threshold = 0.5
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # cards are seen from both sides
 	return m
 
 # UV rectangle of atlas cell i (4 x 4 grid, index = row * 4 + col), inset a little.
