@@ -22,7 +22,7 @@ const FUEL_LOAD_BONUS := 0.5
 # (brakes on), a push is limited per step, and the pusher slows down a little.
 const PARKED_RESISTANCE := 1.6
 const PUSH_STEP_MAX := 0.25
-const PUSH_DRAG := 0.45
+const PUSH_DRAG_RATE := 1.5   # extra slowing per second while pushing (the push itself already slows the pair)
 
 # How hard the engine works: horsepower needed divided by horsepower available.
 static func load_ratio(cfg: Dictionary, implement_id: String) -> float:
@@ -125,7 +125,7 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 			else:
 				nx = old_x
 				nz = old_z
-			v["speed"] = float(v["speed"]) * (1.0 - PUSH_DRAG * (1.0 - share_o) - 0.1 * share_o)
+			v["speed"] = float(v["speed"]) * (1.0 - minf(0.5, PUSH_DRAG_RATE * (1.0 - share_o) * delta))
 			# Only a machine that could not get away is "blocked" (the autopilot waits, then gives up).
 			if share_o <= 0.0 and absf(float(v["speed"])) < 0.3:
 				v["_blocked"] = true
