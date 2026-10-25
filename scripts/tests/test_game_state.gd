@@ -1104,7 +1104,7 @@ func _init() -> void:
 	_check(lf_tv.track_spin.is_empty() != lf_has_tracks or not lf_has_tracks, "the tracked tractor has parts to spin")
 	if lf_has_tracks:
 		lf_tr["speed"] = 2.0
-		var lf_ring := lf_tv.track_vi
+		var lf_ring: int = lf_tv.track_vi
 		var lf_rot0: float = lf_tv.track_spin[0]["angle"]
 		for lf_k in 30:
 			lf_tv.update_from(lf_tr, 0.05)
