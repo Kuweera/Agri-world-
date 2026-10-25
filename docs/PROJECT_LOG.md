@@ -167,3 +167,19 @@
    tap Camera: behind to swing the view back. View the tractor from all sides.
 6. Trees, fence, farmhouse details, hills in the distance. Medium/High: sky and shadows.
 7. Note the FPS low number on each quality level and tell me if Low is still smooth.
+
+## Realistic crops + bigger farm + pushing machines (this update)
+- Crops are now textured leaf cards (assets/textures/crops.png, made by tools/gen_crop_atlas.py)
+  on stalks, planted in straight rows on the soil ridges (no random tile rotation).
+- 5 growth stages: sprout, young, growing, maturing, ripe. Ripe = fresh and harvestable
+  (green leaves, plump husked cobs, full pods), not dry.
+- Farm is bigger: LAND_HALF 20, DRIVE_BOUNDS 19, a much larger yard for parking.
+- Machines push each other (vehicle_model.gd): a moving machine shoves a parked one aside; when
+  two moving machines meet the more powerful pushes the weaker aside. Nobody stops working.
+
+## Test checklist for this update
+1. Look at maize and beans at every stage; check rows line up with the ridges across tiles.
+2. Ripe maize/beans still look fresh. Harvest still only works when ripe.
+3. FPS low on Low/Medium/High compared with before (crops are denser now).
+4. Park machines in the yard; buy several. Drive one into a parked one: it gets pushed.
+5. Run two autopilots near each other: neither should stop with "Autopilot blocked".
