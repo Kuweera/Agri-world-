@@ -1,172 +1,214 @@
-"""Draws assets/textures/crops.png: a 4x4 atlas (128 px cells) of crop cards.
-RGB is a grey light/dark pattern (veins, shading) and alpha is the shape. The game tints
-it with vertex colours, so one atlas serves every growth stage. Run: python3 tools/gen_crop_atlas.py
-Cell index = row * 4 + col. UV of a cell = (col/4, row/4, 1/4, 1/4)."""
+"""Paints assets/textures/crops.png: a 4x4 atlas of 256 px cells, each a whole plant (side view)
+on a transparent background, like the crops in Farming Master 3D. The game puts each picture on
+a few crossed flat cards (crop_models.gd), so a field is dense and cheap to draw.
+Cells: 0-3 maize stages 1-4, 4-7 bean stages 1-4, 8 seedling blades.
+Run from the repo root: python3 tools/gen_crop_atlas.py"""
 import math, random
-import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-S = 512          # hi-res size of one cell
-random.seed(7)
-rng = np.random.default_rng(7)
+H = 1024            # hi-res cell size; downsampled to 256
+CELL = 256
+random.seed(11)
+
+def mix(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+def mul(c, f):
+    return tuple(max(0, min(255, int(v * f))) for v in c)
 
 def new_cell():
-    base = np.clip(0.82 + rng.normal(0, 0.035, (S, S)), 0, 1)
-    rgb = Image.fromarray((base * 255).astype(np.uint8), "L").filter(ImageFilter.GaussianBlur(3))
-    return rgb, Image.new("L", (S, S), 0)
+    im = Image.new("RGBA", (H, H), (60, 110, 40, 0))
+    return im, ImageDraw.Draw(im)
 
-def finish(rgb, alpha):
-    a = alpha.filter(ImageFilter.GaussianBlur(1.2)).resize((128, 128), Image.LANCZOS)
-    g = rgb.resize((128, 128), Image.LANCZOS)
-    a = a.point(lambda v: 0 if v < 40 else (255 if v > 215 else v))
-    return Image.merge("LA", (g, a))
-
-def leaf_poly(width_fn, n=40, y0=498, y1=10, cx=256, wobble=0.0):
-    left, right = [], []
-    for i in range(n + 1):
-        t = i / n
-        y = y0 + (y1 - y0) * t
-        w = width_fn(t) * (1 + wobble * math.sin(t * 38.0))
-        left.append((cx - w, y))
-        right.append((cx + w, y))
-    return left + right[::-1]
-
-def maize_leaf(narrow):
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    mw = 46 if narrow else 78
-    fn = lambda t: max(0.5, 8 * (1 - t) + (mw - 8) * math.sin(math.pi * t ** 0.75) * (1 - 0.15 * t))
-    poly = leaf_poly(fn, wobble=0.05)
-    da.polygon(poly, fill=255)
-    for k in range(-9, 10):                      # parallel veins
-        x0 = 256 + k * (mw / 11.0)
-        dr.line([(256 + (x0 - 256) * 0.2, 498), (x0, 200), (256 + (x0 - 256) * 0.1, 18)], fill=int(205 + 20 * (k % 2)), width=3)
-    dr.line([(256, 498), (256, 14)], fill=250, width=12)    # midrib
-    dr.line([(256, 498), (256, 14)], fill=235, width=5)
-    edge = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(edge).polygon(poly, fill=255)
-    edge = edge.filter(ImageFilter.GaussianBlur(22))
-    e = np.asarray(edge, dtype=np.float32) / 255.0
-    arr = np.asarray(rgb, dtype=np.float32) * (0.62 + 0.38 * np.clip(e * 1.6, 0, 1))
-    return finish(Image.fromarray(arr.astype(np.uint8), "L"), al)
-
-def ellipse_leaf(draw_a, draw_r, cx, cy, rx, ry, ang):
+def curve(nx, ny, side, L, rise, droop, n=26):
     pts = []
-    for i in range(60):
-        th = i / 60 * math.tau
-        px = rx * math.cos(th) * (1 - 0.18 * math.sin(th))   # a little pointed at the tip (top)
-        py = ry * math.sin(th)
-        x = cx + px * math.cos(ang) - py * math.sin(ang)
-        y = cy + px * math.sin(ang) + py * math.cos(ang)
-        pts.append((x, y))
-    draw_a.polygon(pts, fill=255)
-    tip = (cx + ry * math.sin(ang) * -1, cy - ry * math.cos(ang))
+    for i in range(n + 1):
+        u = i / n
+        pts.append((nx + side * L * u, ny - L * (rise * u - droop * u * u)))
     return pts
 
-def bean_leaf():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    da.line([(256, 505), (256, 330)], fill=255, width=14)
-    leaflets = [(256, 175, 92, 140, 0.0), (118, 300, 82, 110, -1.0), (394, 300, 82, 110, 1.0)]
-    for cx, cy, rx, ry, a in leaflets:
-        # ellipse with the long axis along the leaflet direction (a rotates it from vertical)
+def offsets(pts, widths):
+    left, right = [], []
+    for i, (x, y) in enumerate(pts):
+        a = pts[max(0, i - 1)]
+        b = pts[min(len(pts) - 1, i + 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / d, dx / d
+        w = widths[i]
+        left.append((x + nx * w, y + ny * w))
+        right.append((x - nx * w, y - ny * w))
+    return left, right
+
+def draw_leaf(d, pts, wmax, base, tip, vein=True, fold=0.18):
+    n = len(pts) - 1
+    widths = [max(1.5, wmax * math.sin(math.pi * min(1.0, (i / n)) ** 0.75) * (1 - 0.1 * i / n) + 3 * (1 - i / n)) for i in range(n + 1)]
+    widths[-1] = 1.0
+    left, right = offsets(pts, widths)
+    # two tones either side of the midrib gives a folded blade
+    for i in range(n):
+        t = i / n
+        col = mix(base, tip, max(0.0, (t - 0.45) / 0.55) ** 1.2)
+        col = mul(col, 0.78 + 0.3 * t)          # darker at the base, lighter to the tip
+        d.polygon([pts[i], left[i], left[i + 1], pts[i + 1]], fill=mul(col, 1.0 + fold))
+        d.polygon([pts[i], right[i], right[i + 1], pts[i + 1]], fill=mul(col, 1.0 - fold))
+    if vein:
+        d.line(pts, fill=mul(mix(base, tip, 0.5), 1.35), width=max(2, int(wmax / 9)))
+        for i in range(3, n - 1, 2):
+            for s in (left, right):
+                x0, y0 = pts[i]
+                x1, y1 = s[min(n, i + 2)]
+                d.line([(x0, y0), (x0 + (x1 - x0) * 0.9, y0 + (y1 - y0) * 0.9)], fill=mul(mix(base, tip, 0.4), 0.82), width=2)
+
+def maize(stage):
+    im, d = new_cell()
+    cx = H // 2
+    bottom = H - 14
+    tops = {1: 560, 2: 330, 3: 190, 4: 170}
+    top = tops[stage]
+    nleaf = {1: 4, 2: 6, 3: 8, 4: 9}[stage]
+    # stalk
+    if stage >= 2:
+        for y in range(top + 40, bottom, 6):
+            t = (y - top) / (bottom - top)
+            w = 9 + 11 * t
+            d.rectangle([cx - w, y, cx + w, y + 7], fill=mix((150, 185, 85), (105, 150, 55), t))
+        for y in range(top + 120, bottom - 40, 95):
+            d.line([(cx - 20, y), (cx + 20, y)], fill=(95, 130, 50), width=5)
+    base_c = (38, 92, 28)
+    tip_c = (120, 168, 52) if stage < 4 else (140, 178, 58)
+    Lmax = {1: 330, 2: 380, 3: 430, 4: 450}[stage]
+    for k in range(nleaf):
+        t = k / max(1, nleaf - 1)
+        ny = bottom - 60 - t * (bottom - top - 190)
+        side = -1 if k % 2 == 0 else 1
+        L = Lmax * (0.78 + 0.22 * math.sin(math.pi * (0.15 + 0.85 * t))) * random.uniform(0.92, 1.05)
+        rise = 0.85 + 0.55 * t
+        droop = 0.75 + 0.45 * (1 - t) + random.uniform(-0.1, 0.1)
+        pts = curve(cx + side * 10, ny, side, L, rise, droop)
+        jit = random.uniform(0.9, 1.08)
+        draw_leaf(d, pts, 34 + 6 * (1 - t), mul(base_c, jit), mul(tip_c, jit))
+    if stage >= 3:  # tassel
+        n_br = 7 if stage == 4 else 5
+        sz = 1.0 if stage == 4 else 0.65
+        gold = (205, 188, 98)
+        d.line([(cx, top + 70), (cx, top - 40 * sz + 20)], fill=gold, width=9)
+        for i in range(n_br):
+            y0 = top + 60 - i * 14 * sz
+            for s in (-1, 1):
+                pts = [(cx, y0), (cx + s * 45 * sz, y0 - 40 * sz), (cx + s * 90 * sz, y0 - 20 * sz), (cx + s * 120 * sz, y0 + 40 * sz)]
+                d.line(pts, fill=mix(gold, (160, 140, 70), i / n_br), width=6)
+    if stage == 4:  # cobs with husk and silk
+        for (hy, s) in ((0.50, 1), (0.66, -1)):
+            ay = top + (bottom - top) * hy
+            ax = cx + s * 14
+            ang = math.radians(32) * s
+            ln, wd = 250, 62
+            pts = []
+            for i in range(21):
+                u = i / 20
+                px = wd * math.sin(math.pi * min(1.0, 0.12 + 0.88 * u) ** 0.85) * (1 - 0.25 * u)
+                pts.append((u * ln, px))
+            def rot(px, py):
+                return (ax + px * math.sin(ang) * 1.0 - 0 + 0, ay - px * math.cos(ang) + 0)
+            poly_l, poly_r = [], []
+            for (along, wid) in pts:
+                bx = ax + math.sin(ang) * along
+                by = ay - math.cos(ang) * along
+                nx, ny2 = math.cos(ang), math.sin(ang)
+                poly_l.append((bx + nx * wid, by + ny2 * wid))
+                poly_r.append((bx - nx * wid, by - ny2 * wid))
+            d.polygon(poly_l + poly_r[::-1], fill=(142, 182, 78))
+            d.polygon(poly_l[:] + [ (ax + math.sin(ang) * ln * 0.0, ay) ], fill=(158, 196, 92))
+            for k in (0.25, 0.5, 0.75):
+                i = int(k * 20)
+                d.line([(ax, ay), ((poly_l[i][0] + poly_r[i][0]) / 2, (poly_l[i][1] + poly_r[i][1]) / 2)], fill=(120, 160, 60), width=3)
+            tipx = ax + math.sin(ang) * ln
+            tipy = ay - math.cos(ang) * ln
+            for j in range(9):
+                a2 = ang + (j - 4) * 0.12
+                d.line([(tipx, tipy), (tipx + math.sin(a2) * 70, tipy - math.cos(a2) * 70)], fill=(185 - j % 3 * 12, 135, 70), width=4)
+    return im
+
+def trifoliate(d, px, py, ang, size, base, tip, a_spread=0.95):
+    # petiole is drawn by the caller; this draws three leaflets at (px, py) pointing along ang
+    for (da, sc) in ((0.0, 1.0), (-a_spread, 0.82), (a_spread, 0.82)):
+        a = ang + da
+        L = size * sc
         pts = []
-        for i in range(64):
-            th = i / 64 * math.tau
-            px = rx * math.cos(th)
-            py = ry * math.sin(th) * (1.0 if math.sin(th) < 0 else 0.85)
-            x = cx + px * math.cos(a) - py * math.sin(a)
-            y = cy + px * math.sin(a) + py * math.cos(a)
-            pts.append((x, y))
-        da.polygon(pts, fill=255)
-        tipx, tipy = cx + ry * math.sin(a), cy - ry * math.cos(a)
-        basex, basey = cx - ry * math.sin(a) * 0.9, cy + ry * math.cos(a) * 0.9
-        dr.line([(basex, basey), (tipx, tipy)], fill=250, width=8)
-        for k in (-0.5, -0.2, 0.2, 0.5):
-            mx, my = (basex + tipx) / 2, (basey + tipy) / 2
-            dr.line([(mx - (tipx - basex) * 0.2, my - (tipy - basey) * 0.2),
-                     (mx + (tipx - basex) * 0.05 + k * 150 * math.cos(a), my + (tipy - basey) * 0.05 + k * 150 * math.sin(a))], fill=225, width=3)
-    dr.line([(256, 505), (256, 330)], fill=215, width=8)
-    arr = np.asarray(rgb, dtype=np.float32)
-    shade = Image.new("L", (S, S), 255)
-    ImageDraw.Draw(shade).ellipse([60, 60, 450, 420], fill=255)
-    return finish(Image.fromarray(arr.astype(np.uint8), "L"), al)
+        for i in range(25):
+            u = i / 24
+            pts.append((px + math.sin(a) * L * u + math.sin(a) * 2, py - math.cos(a) * L * u))
+        n = 24
+        wid = [size * 0.42 * sc * math.sin(math.pi * (i / n) ** 0.8) + 1 for i in range(n + 1)]
+        wid[-1] = 1.0
+        left, right = offsets(pts, wid)
+        col = mix(base, tip, random.uniform(0.2, 0.7))
+        d.polygon(left + right[::-1], fill=mul(col, 0.9))
+        # lighter half
+        d.polygon(pts + right[::-1], fill=mul(col, 1.18))
+        d.line(pts, fill=mul(col, 1.4), width=max(2, int(size / 40)))
+        for i in (6, 10, 14, 18):
+            d.line([pts[i], left[i + 2]], fill=mul(col, 0.8), width=2)
+            d.line([pts[i], right[i + 2]], fill=mul(col, 0.8), width=2)
 
-def bean_pods():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    da.line([(256, 6), (256, 60)], fill=255, width=10)
-    for (x0, bend, length, wd) in [(256, 0, 450, 30), (215, -45, 390, 26), (300, 55, 410, 27)]:
-        pts_l, pts_r, mid = [], [], []
-        for i in range(31):
-            t = i / 30
-            y = 40 + length * t
-            x = x0 + bend * math.sin(t * 1.8)
-            w = wd * (0.5 + 0.5 * math.sin(math.pi * min(1.0, t * 0.9 + 0.1))) * (1.0 - 0.7 * t ** 6) * (1 + 0.12 * math.sin(t * 40))
-            pts_l.append((x - w, y)); pts_r.append((x + w, y)); mid.append((x, y))
-        da.polygon(pts_l + pts_r[::-1], fill=255)
-        dr.line(mid, fill=240, width=4)
-        for i in range(2, 29, 3):
-            dr.ellipse([mid[i][0] - 9, mid[i][1] - 9, mid[i][0] + 9, mid[i][1] + 9], fill=232)
-    return finish(rgb, al)
-
-def maize_cob():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    # husk: fat capsule, overlapped by leaf layers; silk tuft at the tip
-    for layer, (wx, y0, y1) in enumerate([(78, 500, 120), (62, 500, 100)]):
-        fn = lambda t, wx=wx: wx * math.sin(math.pi * min(1.0, 0.18 + 0.82 * t) ** 0.8) * (1 - 0.35 * t)
-        poly = leaf_poly(fn, y0=y0, y1=y1, cx=256 + (-14 if layer == 0 else 16))
-        da.polygon(poly, fill=255)
-        dr.polygon(poly, fill=int(232 - 25 * layer))
-        dr.line([(256 + (-14 if layer == 0 else 16), y0), (256 + (-6 if layer == 0 else 8), y1)], fill=250, width=6)
-    for k in range(7):
-        a = -0.7 + k * 0.23
-        dr.line([(256, 130), (256 + 70 * math.sin(a) * 1.4, 18 + 22 * abs(a))], fill=255, width=4)
-        da.line([(256, 130), (256 + 70 * math.sin(a) * 1.4, 18 + 22 * abs(a))], fill=255, width=5)
-    return finish(rgb, al)
-
-def tassel():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    da.line([(256, 505), (256, 20)], fill=255, width=14)
-    for i in range(9):
-        y = 90 + i * 45
-        for side in (-1, 1):
-            pts = [(256, y), (256 + side * 70, y - 28), (256 + side * 130, y + 10 + i * 4), (256 + side * 165, y + 55 + i * 5)]
-            da.line(pts, fill=255, width=9)
-            dr.line(pts, fill=235, width=5)
-    return finish(rgb, al)
+def bean(stage):
+    im, d = new_cell()
+    cx = H // 2
+    bottom = H - 20
+    n = {1: 3, 2: 7, 3: 11, 4: 13}[stage]
+    top = {1: 640, 2: 470, 3: 330, 4: 300}[stage]
+    d.line([(cx, bottom), (cx, top)], fill=(95, 140, 55), width=14)
+    base_c = (34, 96, 28)
+    tip_c = (84, 156, 48) if stage < 4 else (110, 168, 52)
+    items = []
+    for k in range(n):
+        t = k / max(1, n - 1)
+        ny = bottom - 40 - t * (bottom - top - 60)
+        side = -1 if k % 2 == 0 else 1
+        spread = random.uniform(0.35, 1.2) * (1.25 - 0.5 * t)
+        ang = side * spread
+        plen = random.uniform(60, 130) * (1.1 - 0.3 * t)
+        size = {1: 190, 2: 205, 3: 215, 4: 220}[stage] * random.uniform(0.85, 1.1)
+        items.append((ny, ang, plen, size, 0.8 + 0.3 * t))
+    for (ny, ang, plen, size, br) in items:
+        ex = cx + math.sin(ang) * plen
+        ey = ny - math.cos(ang) * plen * 0.6
+        d.line([(cx, ny), (ex, ey)], fill=(100, 145, 55), width=8)
+        trifoliate(d, ex, ey, ang * 0.9, size, mul(base_c, br), mul(tip_c, br))
+    if stage == 3:
+        for i in range(7):
+            fx = cx + random.uniform(-230, 230)
+            fy = random.uniform(top + 40, bottom - 260)
+            for k in range(5):
+                a = k * math.tau / 5
+                d.ellipse([fx + math.cos(a) * 16 - 11, fy + math.sin(a) * 16 - 11, fx + math.cos(a) * 16 + 11, fy + math.sin(a) * 16 + 11], fill=(245, 235, 245))
+            d.ellipse([fx - 7, fy - 7, fx + 7, fy + 7], fill=(235, 190, 90))
+    if stage == 4:
+        for (px, py, ln, bend) in [(cx - 120, 560, 230, -0.2), (cx - 70, 600, 260, -0.1), (cx + 90, 540, 250, 0.15), (cx + 140, 600, 220, 0.25), (cx + 20, 660, 240, 0.05)]:
+            pts = [(px + bend * ln * (i / 16) ** 1.5 * 0.8, py + ln * i / 16) for i in range(17)]
+            wid = [20 * math.sin(math.pi * (0.1 + 0.8 * i / 16)) + 2 for i in range(17)]
+            left, right = offsets(pts, wid)
+            d.polygon(left + right[::-1], fill=(138, 184, 66))
+            d.polygon(pts + right[::-1], fill=(120, 168, 52))
+            d.line(pts, fill=(95, 140, 40), width=3)
+            for i in range(3, 15, 3):
+                d.ellipse([pts[i][0] - 7, pts[i][1] - 7, pts[i][0] + 7, pts[i][1] + 7], fill=(155, 198, 80))
+    return im
 
 def blades():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    for k in range(7):
-        a = -0.75 + k * 0.25 + random.uniform(-0.05, 0.05)
-        ln = random.uniform(330, 470)
-        pts_l, pts_r, mid = [], [], []
-        for i in range(25):
-            t = i / 24
-            x = 256 + math.sin(a) * ln * t + 40 * a * t * t * 2
-            y = 500 - math.cos(a) * ln * t
-            w = 20 * (1 - t) ** 0.8 + 1
-            pts_l.append((x - w, y)); pts_r.append((x + w, y)); mid.append((x, y))
-        da.polygon(pts_l + pts_r[::-1], fill=255)
-        dr.line(mid, fill=245, width=4)
-    return finish(rgb, al)
+    im, d = new_cell()
+    cx = H // 2
+    for k in range(9):
+        a = -0.9 + k * 0.225 + random.uniform(-0.04, 0.04)
+        L = random.uniform(430, 640)
+        pts = [(cx + math.sin(a) * L * (i / 24) + 40 * a * (i / 24) ** 2 * 3, H - 14 - math.cos(a) * L * (i / 24)) for i in range(25)]
+        draw_leaf(d, pts, 20, (40, 100, 30), (120, 180, 60), vein=False, fold=0.12)
+    return im
 
-def flowers():
-    rgb, al = new_cell()
-    dr, da = ImageDraw.Draw(rgb), ImageDraw.Draw(al)
-    for (x, y, r) in [(160, 330, 55), (330, 250, 62), (250, 130, 48), (380, 400, 45)]:
-        da.ellipse([x - r, y - r, x + r, y + r], fill=255)
-        dr.ellipse([x - r * 0.4, y - r * 0.4, x + r * 0.4, y + r * 0.4], fill=200)
-    return finish(rgb, al)
-
-cells = [maize_leaf(False), maize_leaf(True), bean_leaf(), bean_pods(),
-         maize_cob(), tassel(), blades(), flowers()]
-atlas = Image.new("LA", (512, 512), (200, 0))
+cells = [maize(1), maize(2), maize(3), maize(4), bean(1), bean(2), bean(3), bean(4), blades()]
+atlas = Image.new("RGBA", (4 * CELL, 4 * CELL), (60, 110, 40, 0))
 for i, c in enumerate(cells):
-    atlas.paste(c, ((i % 4) * 128, (i // 4) * 128))
+    atlas.paste(c.resize((CELL, CELL), Image.LANCZOS), ((i % 4) * CELL, (i // 4) * CELL))
 atlas.save("assets/textures/crops.png", optimize=True)
 print("saved", len(cells), "cells")
