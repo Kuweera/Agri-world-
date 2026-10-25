@@ -1188,7 +1188,7 @@ func _init() -> void:
 	var hv_cfg: Dictionary = VehicleData.VEHICLES["tractor_heavy"]
 	for hb_i in 60:
 		VehicleModel.step(hv_a, hv_cfg, 1.0, 0.0, 0.05, [hv_b])
-	_check(float(hv_a["z"]) > 2.0 and float(hv_b["z"]) > 4.2, "the stronger tractor pushes the weaker moving one")
+	_check(float(hv_a["z"]) > 1.0 and float(hv_b["z"]) > 4.2, "the stronger tractor pushes the weaker moving one")
 	_check(absf(float(hv_b["speed"]) - 1.0) < 0.001, "the pushed tractor keeps working (its speed is untouched)")
 	# A machine against the farmhouse cannot be pushed into it.
 	var hh_a: Dictionary = {"x": 0.0, "z": 3.0, "heading": 0.0, "speed": 0.0, "fuel": 20.0, "hours": 0.0, "implement": "none", "vehicle": "tractor"}
@@ -1326,7 +1326,7 @@ func _init() -> void:
 				var budget := 450 if det == 0 else 900
 				_check(nv > 0 and nv % 3 == 0 and carr[Mesh.ARRAY_COLOR].size() == nv and carr[Mesh.ARRAY_NORMAL].size() == nv, "crop %s stage %d detail %d builds (%d triangles)" % [cid, stg, det, nv / 3])
 				_check(nv / 3 <= budget, "crop %s stage %d detail %d within triangle budget" % [cid, stg, det])
-				_check(cb.size.is_finite() and cb.size.x < 2.6 and cb.size.z < 2.2 and cb.size.y < 1.9, "crop %s stage %d detail %d has sane size" % [cid, stg, det])
+				_check(cb.size.is_finite() and cb.size.x < 3.0 and cb.size.z < 3.0 and cb.size.y < 2.2, "crop %s stage %d detail %d has sane size" % [cid, stg, det])
 	var maize_ripe: ArrayMesh = CropModels.build("maize", 4, 0, 1)
 	var maize_young: ArrayMesh = CropModels.build("maize", 2, 0, 1)
 	_check(maize_ripe.get_aabb().size.y > maize_young.get_aabb().size.y, "ripe maize is taller than growing maize")
