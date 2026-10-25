@@ -1,0 +1,117 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.3"
+
+jobs:
+  export-android:
+    runs-on: ubuntu-22.04
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up templates, keystore and editor settings
+        run: |
+          mkdir -p ~/.local/share/godot/export_templates ~/.config/godot build/android
+          mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+            -keystore $HOME/debug.keystore -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          JAVA_HOME_DIR=$(dirname $(dirname $(readlink -f $(which keytool))))
+          echo "Java home: $JAVA_HOME_DIR"
+          printf '%s\n' '[gd_resource type="EditorSettings" format=3]' '' '[resource]' \
+            'export/android/android_sdk_path = "/usr/lib/android-sdk"' \
+            "export/android/java_sdk_path = \"$JAVA_HOME_DIR\"" \
+            "export/android/debug_keystore = \"$HOME/debug.keystore\"" \
+            'export/android/debug_keystore_user = "androiddebugkey"' \
+            'export/android/debug_keystore_pass = "android"' \
+            > ~/.config/godot/editor_settings-4.tres
+
+      - name: Allow compressed textures for Android
+        run: |
+          # The 3D models (.glb) carry textures. Android export needs ETC2/ASTC import enabled.
+          if grep -q "import_etc2_astc" project.godot; then
+            sed -i 's|textures/vram_compression/import_etc2_astc=.*|textures/vram_compression/import_etc2_astc=true|' project.godot
+          elif grep -q '^\[rendering\]' project.godot; then
+            sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
+          else
+            printf '\n[rendering]\n\ntextures/vram_compression/import_etc2_astc=true\n' >> project.godot
+          fi
+          grep -n "etc2" project.godot
+
+      - name: Import project
+        run: godot --headless --import || true
+
+      - name: Check that every preloaded file exists
+        run: |
+          missing=0
+          for p in $(grep -rhoE 'preload\("res://[^"]+"\)' scripts | sed -E 's|preload\("res://(.*)"\)|\1|' | sort -u); do
+            if [ ! -f "$p" ]; then
+              echo "MISSING FILE: $p"
+              missing=1
+            fi
+          done
+          if [ $missing -eq 0 ]; then echo "All preloaded files exist"; fi
+          ls scripts
+          exit $missing
+
+      - name: Syntax check scripts
+        run: |
+          fail=0
+          for f in farm_main farm_grid camera_rig hud game_state crop_data crop_stages environment_setup save_manager vehicle_data implement_data implement_models suspension machine_models shop_catalog machinery_shop vehicle_model tractor_view drive_controls farm_layout autopilot settings crop_models mesh_builder tile_models farm_scenery; do
+            echo "== $f"
+            godot --headless --check-only --script res://scripts/$f.gd || { echo "SYNTAX FAIL: $f"; fail=1; }
+          done
+          exit $fail
+
+      - name: Run logic tests
+        run: |
+          ls -la scripts scripts/tests || true
+          # A script error in the tests can leave Godot waiting forever, so give it a time limit.
+          code=0
+          timeout 240 godot --headless --script res://scripts/tests/test_game_state.gd || code=$?
+          if [ $code -eq 124 ]; then
+            echo "TESTS HUNG: no result after 240 seconds - a script error stopped the test run. Look above for SCRIPT ERROR."
+          fi
+          exit $code
+
+      - name: Export game APK
+        if: always()
+        run: |
+          # One APK per phone type, each much smaller than a combined one:
+          #   armeabi-v7a = 32-bit phones (budget phones like the TECNO Pop 7 need this one)
+          #   arm64-v8a   = 64-bit phones
+          # Each is a release build, with the debug build as a fallback if release fails.
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
+          sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/main.tscn\"|" project.godot
+          grep main_scene project.godot
+          for abi in armeabi-v7a arm64-v8a; do
+            sed -i 's|^architectures/armeabi-v7a=.*|architectures/armeabi-v7a=false|' export_presets.cfg || true
+            sed -i 's|^architectures/arm64-v8a=.*|architectures/arm64-v8a=false|' export_presets.cfg || true
+            sed -i "s|^architectures/$abi=.*|architectures/$abi=true|" export_presets.cfg || true
+            grep -n "architectures" export_presets.cfg || true
+            if godot --headless --verbose --export-release "Android" build/android/agriworld-main-$abi.apk; then
+              echo "EXPORT $abi: release build"
+            else
+              echo "EXPORT $abi: release failed, using debug build"
+              godot --headless --verbose --export-debug "Android" build/android/agriworld-main-$abi.apk
+            fi
+          done
+
+      - name: APK size report
+        if: always()
+        run: ls -l build/android/*.apk || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agriworld-debug-apks
+          path: build/android/*.apk
