@@ -65,12 +65,16 @@ func _run(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, frames:
 # Simulates an autopilot job headlessly using the same logic as the game.
 func _auto_job(s, kind: String, now0: float, fuel: float = 20.0) -> Dictionary:
 	var ap = AutoPilotScript.new()
-	var vcfg: Dictionary = VehicleData.VEHICLES["tractor"]
-	s.tractor["implement"] = kind
+	# Harvesting is done by a combine (its own header, cutting ahead); the rest by the tractor.
+	var is_comb := kind == "harvester"
+	var vcfg: Dictionary = VehicleData.VEHICLES["combine_small" if is_comb else "tractor"]
+	if not is_comb:
+		s.tractor["implement"] = kind
 	s.tractor["fuel"] = fuel
 	s.last_work_tile = -1
 	var jobs: Array = s.jobs_for(kind, now0)
-	if not ap.start(s.tractor, jobs, float(vcfg["work_offset"])):
+	var lane_w: int = int(vcfg.get("work_width", 1)) if is_comb else 1
+	if not ap.start(s.tractor, jobs, float(vcfg["work_offset"]), lane_w, 8):
 		return {"started": false}
 	var t := 0.0
 	var dt := 1.0 / 60.0
@@ -409,7 +413,7 @@ func _init() -> void:
 	_check(_count_state(job, "growing") == 64, "autopilot plants all 64 tiles")
 	_check(job.money == 5000 - 64 * 12, "seeding charges 12 per tile")
 
-	res = _auto_job(job, "harvester", t0 + 1000.0)
+	res = _auto_job(job, "harvester", t0 + 1000.0, 60.0)
 	_check(res["started"] and res["finished"], "autopilot finishes harvesting")
 	_check(int(job.inventory.get("beans", 0)) == 64 * 3, "autopilot harvests all 64 tiles")
 	_check(_count_state(job, "stubble") == 64, "harvested tiles are left as stubble")
@@ -941,13 +945,14 @@ func _init() -> void:
 	_check(sh_s.buy("tractor_heavy") == "" and sh_s.money == 11000, "buy the heavy tractor")
 	sh_s.tractor["fuel"] = 5.0
 	_check(sh_s.select_vehicle("tractor_heavy") == "" and sh_s.tractor["vehicle"] == "tractor_heavy", "drive the heavy tractor")
-	_check(int(sh_s.vehicle_cfg()["power_hp"]) == 160 and float(sh_s.tractor["fuel"]) == 5.0, "heavy tractor settings, same fuel")
+	_check(int(sh_s.vehicle_cfg()["power_hp"]) == 160 and float(sh_s.tractor["fuel"]) == 40.0, "a bought machine starts with a full tank of its own")
+	sh_s.tractor["fuel"] = 5.0
 	sh_s.money = 500
 	_check(sh_s.refuel() == "" and float(sh_s.tractor["fuel"]) == 40.0, "refuel fills the heavy tractor's bigger tank")
 	sh_s.money = 30000
 	_check(sh_s.buy("tractor_tracked") == "" and sh_s.select_vehicle("tractor_tracked") == "", "switch to the tracked tractor")
-	_check(float(sh_s.tractor["fuel"]) == 40.0, "a bigger tank keeps the fuel")
-	_check(sh_s.select_vehicle("tractor") == "" and float(sh_s.tractor["fuel"]) == 20.0, "a smaller tank caps the fuel")
+	_check(float(sh_s.tractor["fuel"]) == 70.0, "the tracked tractor starts with its full 70 tank")
+	_check(sh_s.select_vehicle("tractor") == "" and float(sh_s.tractor["fuel"]) == 5.0, "the farm tractor keeps its own fuel")
 	_check(sh_s.select_vehicle("tractor_tracked") == "", "back to the tracked tractor")
 	_check(sh_s.select_vehicle("combine_large") == "Not owned", "cannot drive a combine you do not own")
 	var sh_json = JSON.parse_string(JSON.stringify(sh_s.to_dict()))
