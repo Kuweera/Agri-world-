@@ -1,13 +1,14 @@
 extends RefCounted
-# Crops as painted whole-plant pictures on crossed flat cards (like Farming Master 3D).
-# The pictures are in assets/textures/crops.png (made by tools/gen_crop_atlas.py). A field looks
-# dense and real but costs only a few triangles. Plants stand in straight rows on the soil ridges.
-# Five growth stages: 0 sprout, 1 young, 2 growing, 3 maturing, 4 ripe.
-# Ripe crops are fresh and ready to pick (green leaves, cobs, pods), not dry.
-# detail 0 = fewer plants (for weak phones), detail 1 = full.
+# Crops as real plant pictures on crossed flat cards (like Farming Master 3D).
+# The pictures (assets/textures/crops.png, 10 plants) are packed by tools/build_crop_atlas.py;
+# crop_atlas.gd holds each picture's UV rectangle and width/height ratio.
+# Plants stand in straight rows on the soil ridges.
+# Five growth stages: 0 sprout, 1 young, 2 growing, 3 maturing/flowering, 4 ripe.
+# detail 0 = fewer plants and cards (for weak phones), detail 1 = full.
 
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const CropData := preload("res://scripts/crop_data.gd")
+const CropAtlas := preload("res://scripts/crop_atlas.gd")
 
 const ATLAS := "res://assets/textures/crops.png"
 const STAGE_COUNT := 5
@@ -15,15 +16,13 @@ const STAGE_COUNT := 5
 const STAGE_FROM := [0.0, 0.2, 0.45, 0.75, 1.0]
 const RIDGE_TOP := 0.09   # soil ridge height (tile_models.gd)
 
-# Atlas cells: maize stages 1-4 are cells 0-3, bean stages 1-4 are cells 4-7, seedling blades are cell 8.
+# Atlas cells: maize stages 0-4 are cells 0-4, bean stages 0-4 are cells 5-9.
 const MAIZE_CELL := 0
-const BEAN_CELL := 4
-const BLADES_CELL := 8
+const BEAN_CELL := 5
 
-# Card size (height; width is WIDTH_RATIO of it) per stage.
-const MAIZE_SIZE := [0.2, 0.42, 0.75, 1.0, 1.15]
-const BEAN_SIZE := [0.2, 0.22, 0.32, 0.42, 0.46]
-const WIDTH_RATIO := 0.85
+# Height of a plant card in world units per stage (the width follows the picture's shape).
+const MAIZE_HEIGHT := [0.3, 0.55, 0.85, 1.1, 1.3]
+const BEAN_HEIGHT := [0.14, 0.3, 0.4, 0.5, 0.52]
 
 static func stage_for(progress: float) -> int:
 	var idx := 0
@@ -73,22 +72,17 @@ static func build(crop_id: String, stage: int, variant: int = 0, detail: int = 1
 
 # One plant: its picture on two (or three) vertical cards crossed at the plant's base.
 static func _plant(mb, is_maize: bool, base: Vector3, stage: int, sd: int, detail: int) -> void:
-	var cell := BLADES_CELL
-	var size: float = 0.2
-	if stage > 0:
-		cell = (MAIZE_CELL if is_maize else BEAN_CELL) + stage - 1
-	if is_maize:
-		size = float(MAIZE_SIZE[stage])
-	else:
-		size = float(BEAN_SIZE[stage])
-	size *= 0.9 + 0.2 * _h(sd + 3)
-	var width := size * WIDTH_RATIO
+	var cell: int = (MAIZE_CELL if is_maize else BEAN_CELL) + stage
+	var height: float = float(MAIZE_HEIGHT[stage]) if is_maize else float(BEAN_HEIGHT[stage])
+	height *= 0.9 + 0.2 * _h(sd + 3)
+	var width: float = height * float(CropAtlas.ASPECT[cell])
+	var rect: Rect2 = CropAtlas.RECTS[cell]
 	var yaw := _h(sd + 7) * PI
 	var cards := 2 if detail == 0 else 3
-	var shade := 0.92 + 0.12 * _h(sd + 9)
-	var c0 := Color(0.7 * shade, 0.72 * shade, 0.7 * shade)   # a little darker where it meets the soil
+	var shade := 0.92 + 0.1 * _h(sd + 9)
+	var c0 := Color(0.72 * shade, 0.74 * shade, 0.72 * shade)   # a little darker where it meets the soil
 	var c1 := Color(shade, shade, shade)
 	for k in cards:
 		var a := yaw + float(k) * PI / float(cards)
 		var side := Vector3(cos(a), 0.0, sin(a))
-		mb.add_card([base - Vector3(0, 0.01, 0), base + Vector3(0, size, 0)], [width, width], side, cell, c0, c1)
+		mb.add_card([base - Vector3(0, 0.01, 0), base + Vector3(0, height, 0)], [width, width], side, rect, c0, c1)

@@ -164,14 +164,14 @@ func add_diamond(center: Vector3, u: Vector3, v: Vector3, c_base: Color, c_tip: 
 	add_quad(center - u, center + v, center + u, center - v, c_base, mid, c_tip, mid)
 
 # A textured leaf/pod card along a list of points (base first), like add_ribbon but with UVs.
-# The picture runs from the bottom of the atlas cell (first point) to its top (last point).
+# `rect` is the UV rectangle of the picture. It runs from its bottom (first point) to its top (last point).
 # `side` is the direction the card is wide in; widths has one entry per point.
-func add_card(points: Array, widths: Array, side: Vector3, cell: int, c0: Color, c1: Color) -> void:
+func add_card(points: Array, widths: Array, side: Vector3, rect: Rect2, c0: Color, c1: Color) -> void:
 	var n := points.size()
 	if n < 2:
 		return
 	use_uv = true
-	var r := cell_uv(cell)
+	var r := rect
 	for i in n - 1:
 		var t0 := float(i) / float(n - 1)
 		var t1 := float(i + 1) / float(n - 1)
