@@ -183,3 +183,21 @@
 3. FPS low on Low/Medium/High compared with before (crops are denser now).
 4. Park machines in the yard; buy several. Drive one into a parked one: it gets pushed.
 5. Run two autopilots near each other: neither should stop with "Autopilot blocked".
+
+## Plots, roads and the farm map (build A)
+- plot_data.gd: 10 plots (home field + 9 for sale, Medium / Large / Very large), each touching the
+  main road at z = 3.6. Price = tiles x 35, rounded to 50. Plots are bought on the map.
+- GameState.plots (buying order); tiles of bought plots follow the home field's 64 tiles. Save
+  format is version 5 (older saves load with the home field only).
+- map_view.gd: tap a plot to see ripe / growing / ploughed tiles; buy it, look at it, or send the
+  machine you use to it on autopilot (Autopilot.travel_to_plot). The Auto button works the plot picked
+  on the map or by tapping a tile.
+- World is 180 x 180 units (WORLD_HALF 90) with a main road, for-sale signs and a bigger yard.
+- Next: environment (trees, sunlight), vehicle sounds and lights/indicators/horn, more crops.
+
+## Test checklist for build A
+1. Open Map: plots visible, home field tiles coloured; tap a plot for its details.
+2. +5000 test in the Shop, then buy a Medium plot on the Map: it appears with soil tiles.
+3. Look at plot, tap tiles, plough/plant/harvest there; Auto works that plot.
+4. Send machine here: drives out along the road to the plot.
+5. Check FPS with a Large or Very large plot in view (many tiles).
