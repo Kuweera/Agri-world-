@@ -4,8 +4,10 @@ extends RefCounted
 # shadows are off). Heights are decided by simple noise.
 
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
 
-const LAND_HALF := 20.0
+const LAND_HALF := 90.0      # the farm land (same as PlotData.WORLD_HALF)
+const LAND_CELL := 3.0       # size of one ground square
 
 var blobs: MeshInstance3D
 
@@ -28,6 +30,7 @@ func build(parent: Node3D, mat: Material, land_mat: Material = null) -> void:
 	var land: Material = land_mat if land_mat != null else mat
 	_node(parent, _inner_land(noise), land, false)
 	_node(parent, _outer_land(noise), land, false)
+	_node(parent, _roads(), mat, false)
 	_node(parent, _fence(), mat, true)
 	_node(parent, _trees(), mat, true)
 	_node(parent, _house(), mat, true)
@@ -57,36 +60,37 @@ func _land_color(x: float, z: float, noise: FastNoiseLite) -> Color:
 
 func _inner_land(noise: FastNoiseLite) -> ArrayMesh:
 	var mb := MeshBuilder.new()
-	var n := int(LAND_HALF * 2.0)
+	var n := int(LAND_HALF * 2.0 / LAND_CELL)
+	var c := LAND_CELL
 	for i in n:
 		for j in n:
-			var x0 := -LAND_HALF + float(i)
-			var z0 := -LAND_HALF + float(j)
+			var x0 := -LAND_HALF + c * float(i)
+			var z0 := -LAND_HALF + c * float(j)
 			mb.add_quad(
-				Vector3(x0, 0.0, z0), Vector3(x0 + 1.0, 0.0, z0),
-				Vector3(x0 + 1.0, 0.0, z0 + 1.0), Vector3(x0, 0.0, z0 + 1.0),
-				_land_color(x0, z0, noise), _land_color(x0 + 1.0, z0, noise),
-				_land_color(x0 + 1.0, z0 + 1.0, noise), _land_color(x0, z0 + 1.0, noise))
+				Vector3(x0, 0.0, z0), Vector3(x0 + c, 0.0, z0),
+				Vector3(x0 + c, 0.0, z0 + c), Vector3(x0, 0.0, z0 + c),
+				_land_color(x0, z0, noise), _land_color(x0 + c, z0, noise),
+				_land_color(x0 + c, z0 + c, noise), _land_color(x0, z0 + c, noise))
 	return mb.build()
 
 func _outer_height(x: float, z: float, noise: FastNoiseLite) -> float:
 	var r := maxf(absf(x), absf(z))
-	var f := smoothstep(30.0, 70.0, r)
+	var f := smoothstep(88.0, 135.0, r)
 	var n := noise.get_noise_2d(x * 0.5, z * 0.5) * 0.5 + 0.5
 	return -0.04 + f * (2.0 + 12.0 * n)
 
 func _outer_color(x: float, z: float, noise: FastNoiseLite) -> Color:
 	var r := maxf(absf(x), absf(z))
-	var f := smoothstep(30.0, 90.0, r)
+	var f := smoothstep(88.0, 160.0, r)
 	var n := noise.get_noise_2d(x * 1.5, z * 1.5) * 0.5 + 0.5
 	var c := Color(0.28, 0.48, 0.17).lerp(Color(0.38, 0.54, 0.2), n)
 	return c.lerp(Color(0.2, 0.36, 0.22), f)
 
 func _outer_land(noise: FastNoiseLite) -> ArrayMesh:
 	var mb := MeshBuilder.new()
-	var cell := 5.0
-	var cells := 40
-	var origin := -100.0
+	var cell := 8.0
+	var cells := 46
+	var origin := -LAND_HALF - 96.0   # a multiple of the cell size from the edge of the land
 	for i in cells:
 		for j in cells:
 			var x0 := origin + cell * float(i)
@@ -102,6 +106,31 @@ func _outer_land(noise: FastNoiseLite) -> ArrayMesh:
 				_outer_color(x1, z1, noise), _outer_color(x0, z1, noise))
 	return mb.build()
 
+# ---- Roads ----
+# The main road runs east-west between the home field and the farmhouse yard. Every plot
+# touches it, so a machine can always drive from the yard to any plot.
+
+func _roads() -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var asphalt := Color(0.24, 0.24, 0.26)
+	var line := Color(0.85, 0.82, 0.7)
+	var y := 0.025
+	var h := PlotData.WORLD_HALF
+	var z0 := PlotData.ROAD_Z - PlotData.ROAD_HALF
+	var z1 := PlotData.ROAD_Z + PlotData.ROAD_HALF
+	mb.add_flat_quad(Vector3(-h, y, z0), Vector3(h, y, z0), Vector3(h, y, z1), Vector3(-h, y, z1), asphalt)
+	for zz in [z0 + 0.08, z1 - 0.2]:
+		mb.add_flat_quad(Vector3(-h, y + 0.004, zz), Vector3(h, y + 0.004, zz), Vector3(h, y + 0.004, zz + 0.12), Vector3(-h, y + 0.004, zz + 0.12), line)
+	var x := -h + 1.0
+	while x < h - 2.0:
+		mb.add_flat_quad(Vector3(x, y + 0.004, PlotData.ROAD_Z - 0.07), Vector3(x + 2.0, y + 0.004, PlotData.ROAD_Z - 0.07),
+			Vector3(x + 2.0, y + 0.004, PlotData.ROAD_Z + 0.07), Vector3(x, y + 0.004, PlotData.ROAD_Z + 0.07), line)
+		x += 4.0
+	# A short driveway from the road to the farmhouse door
+	var dirt := Color(0.5, 0.4, 0.28)
+	mb.add_flat_quad(Vector3(-0.9, y, z1), Vector3(0.9, y, z1), Vector3(0.9, y, 5.2), Vector3(-0.9, y, 5.2), dirt)
+	return mb.build()
+
 # ---- Fence ----
 
 func _fence() -> ArrayMesh:
@@ -109,8 +138,8 @@ func _fence() -> ArrayMesh:
 	var wood := Color(0.5, 0.35, 0.18)
 	var rail := Color(0.6, 0.44, 0.25)
 	var hh := LAND_HALF
-	for k in int(hh) + 1:
-		var t := -hh + 2.0 * float(k)
+	for k in int(hh / 2.0) + 1:
+		var t := -hh + 4.0 * float(k)
 		mb.add_box(Vector3(t, 0.45, -hh), Vector3(0.16, 0.9, 0.16), wood)
 		mb.add_box(Vector3(t, 0.45, hh), Vector3(0.16, 0.9, 0.16), wood)
 		mb.add_box(Vector3(-hh, 0.45, t), Vector3(0.16, 0.9, 0.16), wood)
@@ -126,12 +155,14 @@ func _fence() -> ArrayMesh:
 
 func _tree_list() -> Array:
 	var list: Array = []
-	for i in 24:
-		var a := TAU * float(i) / 24.0 + _h(i + 3) * 0.3
-		var r := 26.0 + 9.0 * _h(i + 40)
+	for i in 40:
+		var a := TAU * float(i) / 40.0 + _h(i + 3) * 0.3
+		var r := LAND_HALF + 8.0 + 22.0 * _h(i + 40)
 		var p := Vector2(cos(a) * r, sin(a) * r)
-		if maxf(absf(p.x), absf(p.y)) < 23.0:
-			p *= 1.3
+		# push the tree out so it is outside the square fence
+		var m := maxf(absf(p.x), absf(p.y))
+		if m < LAND_HALF + 6.0:
+			p *= (LAND_HALF + 6.0) / m
 		list.append({"p": p, "s": 0.8 + 0.6 * _h(i + 80), "c": i})
 	return list
 

@@ -2,7 +2,7 @@ extends RefCounted
 # Vehicle and implement configuration. All numbers live here.
 
 # Tractor may not leave this square (inside the fence).
-const DRIVE_BOUNDS := 19.0
+const DRIVE_BOUNDS := 89.0
 
 # Solid rectangles as Rect2(x, z, width, depth). The farmhouse for now.
 const OBSTACLES := [Rect2(-2.7, 5.3, 5.4, 4.4)]

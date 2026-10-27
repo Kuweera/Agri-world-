@@ -16,6 +16,7 @@ extends RefCounted
 # VehicleModel.step(). It may set the tractor's heading/speed directly while pivoting.
 
 const FarmLayout := preload("res://scripts/farm_layout.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
 
 const MARGIN := 0.3        # lane runs this far past the first/last tile
 const CORRIDOR_Z := 3.6    # free strip between the field and the farmhouse
@@ -24,6 +25,7 @@ const PIVOT_RATE := 2.0    # radians per second
 const ARRIVE := 0.08
 const BLOCK_WAIT := 8.0   # seconds to wait for another machine to move before giving up
 
+var plot_id := "farm"    # the plot whose rows the jobs refer to
 var active := false
 var working := false
 var finished := false
@@ -47,8 +49,8 @@ func _add(x: float, z: float, work: bool) -> void:
 # The tool works `off` behind the tractor, so the tractor runs `off` past the tiles.
 func _lane_x(job: Dictionary, dir: int, off: float) -> Vector2:
 	var half := FarmLayout.PITCH / 2.0
-	var left := FarmLayout.col_x(int(job["c0"])) - half
-	var right := FarmLayout.col_x(int(job["c1"])) + half
+	var left := FarmLayout.col_x(int(job["c0"]), plot_id) - half
+	var right := FarmLayout.col_x(int(job["c1"]), plot_id) + half
 	if dir > 0:
 		return Vector2(left - MARGIN + off, right + MARGIN + off)
 	return Vector2(right + MARGIN - off, left - MARGIN - off)
@@ -77,9 +79,10 @@ static func plan_lanes(jobs: Array, width: int, rows: int) -> Array:
 	return lanes
 
 # Returns false if there is nothing to do. width and rows plan wide lanes (see plan_lanes).
-func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1, rows: int = 8) -> bool:
+func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1, rows: int = 8, plot: String = "farm") -> bool:
 	if jobs.is_empty():
 		return false
+	plot_id = plot
 	var list: Array = plan_lanes(jobs, width, rows)
 	lane_count = list.size()
 	reserved_rows = []
@@ -92,21 +95,28 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 	var tz := float(tr["z"])
 
 	# Begin with whichever end of the job is nearest the tractor.
-	var first_z := FarmLayout.row_z(int(list[0]["row"]))
-	var last_z := FarmLayout.row_z(int(list[list.size() - 1]["row"]))
+	var first_z := FarmLayout.row_z(int(list[0]["row"]), plot_id)
+	var last_z := FarmLayout.row_z(int(list[list.size() - 1]["row"]), plot_id)
 	if absf(tz - last_z) < absf(tz - first_z):
 		list.reverse()
 
 	# First lane runs away from the side the tractor is on.
 	var first: Dictionary = list[0]
-	var mid := (FarmLayout.col_x(int(first["c0"])) + FarmLayout.col_x(int(first["c1"]))) / 2.0
+	var mid := (FarmLayout.col_x(int(first["c0"]), plot_id) + FarmLayout.col_x(int(first["c1"]), plot_id)) / 2.0
 	var dir := -1 if tx >= mid else 1
 	var sx := _lane_x(first, dir, work_offset).x
 	var x0 := maxf(tx, sx) if dir < 0 else minf(tx, sx)
-	var first_row_z := FarmLayout.row_z(int(first["row"]))
+	var first_row_z := FarmLayout.row_z(int(first["row"]), plot_id)
+	# Far from the plot (another plot, or the yard of a distant plot): use the main road.
+	var near := PlotData.rect_of(plot_id).grow(10.0).has_point(Vector2(tx, tz))
 
 	wps = []
-	if tz > YARD_Z:
+	if not near:
+		if absf(tz - CORRIDOR_Z) > 0.3:
+			_add(tx, CORRIDOR_Z, false)
+		_add(sx, CORRIDOR_Z, false)
+		_add(sx, first_row_z, false)
+	elif tz > YARD_Z:
 		# In the yard: go round through the corridor in front of the house.
 		_add(tx, CORRIDOR_Z, false)
 		_add(x0, CORRIDOR_Z, false)
@@ -118,11 +128,11 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 	for k in list.size():
 		var job: Dictionary = list[k]
 		var lx := _lane_x(job, dir, work_offset)
-		var z := FarmLayout.row_z(int(job["row"]))
+		var z := FarmLayout.row_z(int(job["row"]), plot_id)
 		_add(lx.y, z, true)
 		if k < list.size() - 1:
 			var nxt: Dictionary = list[k + 1]
-			var nz := FarmLayout.row_z(int(nxt["row"]))
+			var nz := FarmLayout.row_z(int(nxt["row"]), plot_id)
 			var nl := _lane_x(nxt, -dir, work_offset)
 			var ex := lx.y
 			# Keep going the same way if the next lane needs us further along.
@@ -132,6 +142,36 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 			_add(xx, nz, false)
 			dir = -dir
 
+	idx = 0
+	active = true
+	working = false
+	finished = false
+	aligned = false
+	stuck_time = 0.0
+	message = ""
+	return true
+
+# Drives to a plot without working: out of the yard onto the main road, along it to the plot's
+# gate, then a few units into the plot. kind is "travel" so the game knows nothing is worked.
+func travel_to_plot(tr: Dictionary, id: String) -> bool:
+	if not PlotData.has_plot(id):
+		return false
+	var g := PlotData.gate_of(id)
+	var inside := -3.0 if str(PlotData.get_plot(id)["side"]) == "n" else 3.0
+	var tx := float(tr["x"])
+	var tz := float(tr["z"])
+	wps = []
+	if absf(tz - CORRIDOR_Z) > 0.3:
+		_add(tx, CORRIDOR_Z, false)
+	_add(g.x, CORRIDOR_Z, false)
+	_add(g.x, g.y + inside, false)
+	plot_id = id
+	kind = "travel"
+	lane_count = 0
+	reserved_rows = []
+	pass_no = 3        # never starts another pass
+	pass_worked = 0
+	job_worked = 0
 	idx = 0
 	active = true
 	working = false

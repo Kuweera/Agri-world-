@@ -7,12 +7,13 @@ const CropData := preload("res://scripts/crop_data.gd")
 const VehicleData := preload("res://scripts/vehicle_data.gd")
 const ImplementData := preload("res://scripts/implement_data.gd")
 const FarmLayout := preload("res://scripts/farm_layout.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
 const Parking := preload("res://scripts/parking.gd")
 
 const COLS := 8
 const ROWS := 8
 const START_MONEY := 500
-const SCHEMA_VERSION := 4
+const SCHEMA_VERSION := 5
 const RELIEF_AMOUNT := 100
 const STATES := ["unploughed", "ploughed", "growing", "stubble"]
 # After a harvest the land is left as stubble and must be ploughed again before replanting.
@@ -31,6 +32,7 @@ const Hitbox := preload("res://scripts/hitbox.gd")
 var money: int = START_MONEY
 var inventory: Dictionary = {}
 var tiles: Array = []
+var plots: Array = ["farm"]   # ids of the owned plots in buying order; their tiles follow each other in `tiles`
 var tractor: Dictionary = {}      # the machine being driven: always the same dictionary as fleet[its id]
 var fleet: Dictionary = {}        # vehicle id -> machine {x, z, heading, speed, fuel, hours, implement, vehicle}
 # Not saved: stops a tile being worked twice in one pass (kept per machine).
@@ -49,9 +51,16 @@ func _init() -> void:
 	fleet = {"tractor": tractor}
 	owned = STARTER_OWNED.duplicate()
 	_sync_fleet()
-	for row in ROWS:
-		for col in COLS:
+	tiles = []
+	_add_plot_tiles(PlotData.HOME)
+
+# Adds the tiles of a plot (row by row) at the end of `tiles`.
+func _add_plot_tiles(id: String) -> void:
+	var p := PlotData.get_plot(id)
+	for row in int(p["rows"]):
+		for col in int(p["cols"]):
 			tiles.append({
+				"plot": id,
 				"col": col,
 				"row": row,
 				"state": "unploughed",
@@ -59,6 +68,58 @@ func _init() -> void:
 				"planted_at": 0.0,
 				"fertilized": false,
 			})
+
+# --- Plots -------------------------------------------------------------------------------
+
+func owns_plot(id: String) -> bool:
+	return plots.has(id)
+
+# "" if the plot can be bought now, otherwise why not.
+func can_buy_plot(id: String) -> String:
+	if not PlotData.has_plot(id):
+		return "Unknown plot"
+	if plots.has(id):
+		return "You already own this plot"
+	if money < PlotData.price_of(id):
+		return "Not enough money"
+	return ""
+
+func buy_plot(id: String) -> String:
+	var err := can_buy_plot(id)
+	if err != "":
+		return err
+	money -= PlotData.price_of(id)
+	plots.append(id)
+	_add_plot_tiles(id)
+	return ""
+
+# Index of the plot's first tile, -1 if it is not owned.
+func plot_start(id: String) -> int:
+	return FarmLayout.tile_start(plots, id)
+
+# What is on a plot: {"tiles", "ripe", "growing", "ploughed", "empty", "ready"}.
+# ripe = tiles ready to harvest, growing = planted but not ripe yet, ploughed = ready to plant,
+# empty = unploughed or stubble. ready is true when at least one tile is ripe.
+func plot_status(id: String, now: float) -> Dictionary:
+	var out := {"tiles": 0, "ripe": 0, "growing": 0, "ploughed": 0, "empty": 0, "ready": false}
+	var start := plot_start(id)
+	if start < 0:
+		return out
+	var n := PlotData.tile_count(id)
+	out["tiles"] = n
+	for i in range(start, start + n):
+		var st: String = tiles[i]["state"]
+		if st == "growing":
+			if is_ripe(i, now):
+				out["ripe"] += 1
+			else:
+				out["growing"] += 1
+		elif st == "ploughed":
+			out["ploughed"] += 1
+		else:
+			out["empty"] += 1
+	out["ready"] = int(out["ripe"]) > 0
+	return out
 
 func _valid(i: int) -> bool:
 	return i >= 0 and i < tiles.size()
@@ -386,12 +447,17 @@ func can_work(kind: String, i: int, now: float) -> bool:
 		return (st == "ploughed" or st == "growing") and not tiles[i].get("fertilized", false) and not is_ripe(i, now)
 	return false
 
-# Field rows (0..ROWS-1) where the tool has at least one tile to work.
-func rows_with_work(kind: String, now: float) -> Array:
+# Rows of a plot (default: the home field) where the tool has at least one tile to work.
+func rows_with_work(kind: String, now: float, plot_id: String = PlotData.HOME) -> Array:
 	var rows: Array = []
-	for row in ROWS:
-		for col in COLS:
-			if can_work(kind, row * COLS + col, now):
+	var start := plot_start(plot_id)
+	if start < 0:
+		return rows
+	var p := PlotData.get_plot(plot_id)
+	var cols := int(p["cols"])
+	for row in int(p["rows"]):
+		for col in cols:
+			if can_work(kind, start + row * cols + col, now):
 				rows.append(row)
 				break
 	return rows
@@ -405,15 +471,20 @@ func count_work(kind: String, now: float) -> int:
 	return n
 
 # One job per row that needs work: {"row", "c0", "c1"} (first and last column to visit).
-func jobs_for(kind: String, now: float, skip_rows: Array = []) -> Array:
+func jobs_for(kind: String, now: float, skip_rows: Array = [], plot_id: String = PlotData.HOME) -> Array:
 	var jobs: Array = []
-	for row in ROWS:
+	var start := plot_start(plot_id)
+	if start < 0:
+		return jobs
+	var p := PlotData.get_plot(plot_id)
+	var cols := int(p["cols"])
+	for row in int(p["rows"]):
 		if skip_rows.has(row):
 			continue
 		var c0 := -1
 		var c1 := -1
-		for col in COLS:
-			if can_work(kind, row * COLS + col, now):
+		for col in cols:
+			if can_work(kind, start + row * cols + col, now):
 				if c0 < 0:
 					c0 = col
 				c1 = col
@@ -440,7 +511,7 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String, machine: Di
 	var h: float = m["heading"]
 	var cx := float(m["x"]) - sin(h) * off
 	var cz := float(m["z"]) - cos(h) * off
-	var idx := FarmLayout.world_to_tile(cx, cz)
+	var idx := FarmLayout.world_to_tile(cx, cz, plots)
 	if idx < 0:
 		m["_lwt"] = -1
 		return "skip"
@@ -454,7 +525,7 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String, machine: Di
 		for side in [-1.0, 1.0]:
 			var nj := FarmLayout.world_to_tile(
 				cx + cos(h) * side * float(k) * TILE_PITCH,
-				cz - sin(h) * side * float(k) * TILE_PITCH)
+				cz - sin(h) * side * float(k) * TILE_PITCH, plots)
 			if nj >= 0 and not targets.has(nj):
 				targets.append(nj)
 	var kind: String = "harvester" if comb else ImplementData.type_of(impl_id)
@@ -510,6 +581,7 @@ func to_dict() -> Dictionary:
 		"inventory": inventory.duplicate(),
 		"fertilizer": fertilizer,
 		"owned": owned.duplicate(),
+		"plots": plots.duplicate(),
 		"tiles": out_tiles,
 		"tractor": tr,
 		"fleet": out_fleet,
@@ -544,6 +616,9 @@ func migrate(data: Dictionary) -> Dictionary:
 			tr3["vehicle"] = "tractor"
 		d["owned"] = own
 		d["schema_version"] = 4
+	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 4:
+		d["plots"] = ["farm"]
+		d["schema_version"] = 5
 	return d
 
 func _is_num(v: Variant) -> bool:
@@ -569,7 +644,17 @@ func from_dict(data: Dictionary) -> String:
 	var fert = d.get("fertilizer", 0)
 	if not _is_num(fert) or fert < 0 or not is_finite(float(fert)):
 		return "Bad fertilizer"
-	if not d.has("tiles") or typeof(d["tiles"]) != TYPE_ARRAY or d["tiles"].size() != COLS * ROWS:
+	var plots_raw = d.get("plots", ["farm"])
+	if typeof(plots_raw) != TYPE_ARRAY or plots_raw.is_empty() or str(plots_raw[0]) != PlotData.HOME:
+		return "Bad plots"
+	var new_plots: Array = []
+	var expected_tiles := 0
+	for pid in plots_raw:
+		if typeof(pid) != TYPE_STRING or not PlotData.has_plot(pid) or new_plots.has(pid):
+			return "Bad plots"
+		new_plots.append(pid)
+		expected_tiles += PlotData.tile_count(pid)
+	if not d.has("tiles") or typeof(d["tiles"]) != TYPE_ARRAY or d["tiles"].size() != expected_tiles:
 		return "Bad tiles"
 	var new_tiles: Array = []
 	for i in d["tiles"].size():
@@ -593,9 +678,11 @@ func from_dict(data: Dictionary) -> String:
 		if typeof(fz) != TYPE_BOOL:
 			return "Bad tile"
 		fz = fz and (st == "ploughed" or st == "growing")
+		var info := FarmLayout.tile_info(i, new_plots)
 		new_tiles.append({
-			"col": i % COLS,
-			"row": floori(float(i) / float(COLS)),
+			"plot": info["plot"],
+			"col": info["col"],
+			"row": info["row"],
 			"state": st,
 			"crop": crop,
 			"planted_at": float(planted),
@@ -652,6 +739,7 @@ func from_dict(data: Dictionary) -> String:
 	fertilizer = int(fert)
 	owned = own
 	tiles = new_tiles
+	plots = new_plots
 	tractor = {
 		"x": float(tr["x"]),
 		"z": float(tr["z"]),

@@ -8,6 +8,8 @@ const TileModels := preload("res://scripts/tile_models.gd")
 const MeshBuilder := preload("res://scripts/mesh_builder.gd")
 const FarmSceneryScript := preload("res://scripts/farm_scenery.gd")
 const CropData := preload("res://scripts/crop_data.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
+const FarmLayout := preload("res://scripts/farm_layout.gd")
 
 const SOIL_TEXTURE := "res://assets/textures/soil.png"
 const GRASS_TEXTURE := "res://assets/textures/grass.png"
@@ -15,8 +17,10 @@ const GRASS_TEXTURE := "res://assets/textures/grass.png"
 const PITCH := 1.5
 const FIELD_CENTER := Vector3(0, 0, -4)
 
-var cols: int = GameStateScript.COLS
+var cols: int = GameStateScript.COLS     # the home field (kept for older code and tests)
 var rows: int = GameStateScript.ROWS
+var built_plots: Array = []   # ids of the plots that have tile nodes, in the same order as GameState.plots
+var lots: Dictionary = {}     # plot id -> {"mesh": MeshInstance3D, "sign": Node3D} for plots not owned yet
 var tile_nodes: Array = []
 var tile_keys: Array = []
 var crop_nodes: Array = []
@@ -51,21 +55,10 @@ func _ready() -> void:
 			_tile_mesh(kind, v)
 	_prebuild_crops()
 
-	for row in rows:
-		for col in cols:
-			var i := row * cols + col
-			var mi := MeshInstance3D.new()
-			mi.material_override = mat_ground
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mi.position = Vector3(
-				FIELD_CENTER.x + (col - (cols - 1) / 2.0) * PITCH, 0.0,
-				FIELD_CENTER.z + (row - (rows - 1) / 2.0) * PITCH)
-			mi.mesh = _tile_mesh("unploughed", _variant(i, 3))
-			add_child(mi)
-			tile_nodes.append(mi)
-			tile_keys.append("unploughed:%d" % _variant(i, 3))
-			crop_nodes.append(null)
-			crop_keys.append("")
+	build_plot(PlotData.HOME)
+	for p in PlotData.PLOTS:
+		if p["id"] != PlotData.HOME:
+			_make_lot(str(p["id"]))
 
 	# Selection frame (one node, moved to the selected tile)
 	var cb := MeshBuilder.new()
@@ -80,6 +73,107 @@ func _ready() -> void:
 	cursor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	cursor.visible = false
 	add_child(cursor)
+
+# Creates the tile nodes of a plot. Call it for each owned plot in the order they were bought,
+# so node i belongs to GameState.tiles[i].
+func build_plot(id: String) -> void:
+	if built_plots.has(id) or not PlotData.has_plot(id):
+		return
+	var p := PlotData.get_plot(id)
+	var pc := int(p["cols"])
+	var pr := int(p["rows"])
+	for row in pr:
+		for col in pc:
+			var i := tile_nodes.size()
+			var mi := MeshInstance3D.new()
+			mi.material_override = mat_ground
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.position = Vector3(PlotData.col_x(id, col), 0.0, PlotData.row_z(id, row))
+			mi.mesh = _tile_mesh("unploughed", _variant(i, 3))
+			add_child(mi)
+			tile_nodes.append(mi)
+			tile_keys.append("unploughed:%d" % _variant(i, 3))
+			crop_nodes.append(null)
+			crop_keys.append("")
+	built_plots.append(id)
+	_remove_lot(id)
+
+# Back to the home field only (a new game): removes the other plots' tiles and puts the signs back.
+func reset_plots() -> void:
+	var home_n := PlotData.tile_count(PlotData.HOME)
+	for i in range(tile_nodes.size() - 1, home_n - 1, -1):
+		(tile_nodes[i] as Node).queue_free()
+		if crop_nodes[i] != null:
+			(crop_nodes[i] as Node).queue_free()
+	tile_nodes.resize(home_n)
+	tile_keys.resize(home_n)
+	crop_nodes.resize(home_n)
+	crop_keys.resize(home_n)
+	var removed: Array = built_plots.duplicate()
+	removed.erase(PlotData.HOME)
+	built_plots = [PlotData.HOME]
+	for id in removed:
+		_make_lot(str(id))
+	if cursor != null:
+		cursor.visible = false
+	cursor_index = -1
+
+# A plot that is for sale: its ground, a boundary and a sign with its name, size and price.
+func _make_lot(id: String) -> void:
+	var p := PlotData.get_plot(id)
+	var r := PlotData.rect_of(id)
+	var mb := MeshBuilder.new()
+	var y := 0.014
+	var grass := Color(0.44, 0.58, 0.24)
+	mb.add_flat_quad(Vector3(r.position.x, y, r.position.y), Vector3(r.end.x, y, r.position.y),
+		Vector3(r.end.x, y, r.end.y), Vector3(r.position.x, y, r.end.y), grass)
+	var post := Color(0.9, 0.8, 0.25)
+	var t := 0.18
+	for rect in [
+		[r.position.x, r.position.y, r.size.x, t], [r.position.x, r.end.y - t, r.size.x, t],
+		[r.position.x, r.position.y, t, r.size.y], [r.end.x - t, r.position.y, t, r.size.y]]:
+		mb.add_flat_quad(Vector3(rect[0], y + 0.004, rect[1]), Vector3(rect[0] + rect[2], y + 0.004, rect[1]),
+			Vector3(rect[0] + rect[2], y + 0.004, rect[1] + rect[3]), Vector3(rect[0], y + 0.004, rect[1] + rect[3]), post)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mb.build()
+	mi.material_override = mat_vc
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	# Sign at the road side of the plot
+	var gate := PlotData.gate_of(id)
+	var sign_node := Node3D.new()
+	var sb := MeshBuilder.new()
+	sb.add_box(Vector3(0, 0.9, 0), Vector3(0.12, 1.8, 0.12), Color(0.4, 0.28, 0.14))
+	sb.add_box(Vector3(0, 1.9, 0), Vector3(3.6, 1.3, 0.1), Color(0.93, 0.9, 0.78))
+	var board := MeshInstance3D.new()
+	board.mesh = sb.build()
+	board.material_override = mat_vc
+	board.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	sign_node.add_child(board)
+	var label := Label3D.new()
+	label.text = "FOR SALE\n%s\n%s  (%d tiles)\n%d" % [str(p["name"]), str(p["size"]), PlotData.tile_count(id), PlotData.price_of(id)]
+	label.font_size = 48
+	label.pixel_size = 0.0055
+	label.modulate = Color(0.12, 0.1, 0.05)
+	label.outline_size = 0
+	label.position = Vector3(0, 1.9, 0.07)
+	sign_node.add_child(label)
+	var back: Label3D = label.duplicate() as Label3D
+	back.position = Vector3(0, 1.9, -0.07)
+	back.rotation.y = PI
+	sign_node.add_child(back)
+	var side_dir := -1.0 if str(p["side"]) == "n" else 1.0   # towards the road
+	sign_node.position = Vector3(gate.x, 0.0, gate.y + side_dir * 0.5)
+	add_child(sign_node)
+	lots[id] = {"mesh": mi, "sign": sign_node}
+
+func _remove_lot(id: String) -> void:
+	if not lots.has(id):
+		return
+	var l: Dictionary = lots[id]
+	(l["mesh"] as Node).queue_free()
+	(l["sign"] as Node).queue_free()
+	lots.erase(id)
 
 func _tile_mesh(kind: String, variant: int) -> ArrayMesh:
 	var key := "t:%s:%d" % [kind, variant]
@@ -113,17 +207,9 @@ func set_blob_shadows(on: bool) -> void:
 	if scenery != null:
 		scenery.set_blob_visible(on)
 
-# Index = row * cols + col, same order as GameState.tiles.
+# Tile index across all built plots, same order as GameState.tiles. -1 if no tile is there.
 func world_to_tile(p: Vector3) -> int:
-	var lx := p.x - FIELD_CENTER.x + cols * PITCH / 2.0
-	var lz := p.z - FIELD_CENTER.z + rows * PITCH / 2.0
-	if lx < 0.0 or lz < 0.0:
-		return -1
-	var col := int(lx / PITCH)
-	var row := int(lz / PITCH)
-	if col >= cols or row >= rows:
-		return -1
-	return row * cols + col
+	return FarmLayout.world_to_tile(p.x, p.z, built_plots if not built_plots.is_empty() else FarmLayout.HOME_ONLY)
 
 func refresh_tile(i: int, tile: Dictionary, progress: float, is_selected: bool) -> void:
 	var node: MeshInstance3D = tile_nodes[i]

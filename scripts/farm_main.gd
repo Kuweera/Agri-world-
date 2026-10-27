@@ -15,6 +15,9 @@ const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const EnvironmentSetupScript := preload("res://scripts/environment_setup.gd")
+const MapViewScript := preload("res://scripts/map_view.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
+const FarmLayout := preload("res://scripts/farm_layout.gd")
 
 const QUALITY_NAMES := ["Low", "Medium", "High"]
 const DRIVE_SAVE_INTERVAL := 8.0   # seconds; saving more often can cause hitches on slow storage
@@ -38,6 +41,9 @@ var save_timer := 0.0
 var empty_warned := false
 var shop                  # machinery shop screen (an overlay)
 var shop_button: Button
+var map_view              # farm map screen (an overlay)
+var map_button: Button
+var focus_plot := ""      # the plot the autopilot works; set by tapping a tile or on the map
 var machines := {}       # vehicle id -> {"view", "ap", "cfg", "cfg_impl"}: every machine runs at once
 var vehicle_text_timer := 0.0
 var last_heading := 0.0
@@ -56,11 +62,14 @@ func _ready() -> void:
 
 	grid = FarmGridScript.new()
 	add_child(grid)
+	for pid in state.plots:
+		grid.build_plot(str(pid))
 
 	_sync_machines()
 
 	rig = CameraRigScript.new()
 	rig.position = Vector3(0, 0, -1)
+	rig.max_dist = 60.0
 	add_child(rig)
 
 	_apply_quality(int(settings["quality"]))
@@ -92,6 +101,25 @@ func _ready() -> void:
 	shop_layer.add_child(shop)
 	shop.changed.connect(_on_shop_changed)
 	shop.closed.connect(_on_shop_closed)
+
+	# Farm map: a "Map" button under the Shop button and a full-screen overlay.
+	map_button = Button.new()
+	map_button.text = "Map"
+	map_button.add_theme_font_size_override("font_size", 26)
+	map_button.anchor_left = 1.0
+	map_button.anchor_right = 1.0
+	map_button.offset_left = -190.0
+	map_button.offset_right = -20.0
+	map_button.offset_top = 184.0
+	map_button.offset_bottom = 248.0
+	map_button.pressed.connect(_open_map)
+	shop_layer.add_child(map_button)
+	map_view = MapViewScript.new()
+	shop_layer.add_child(map_view)
+	map_view.plot_bought.connect(_on_plot_bought)
+	map_view.go_requested.connect(_on_map_go)
+	map_view.send_requested.connect(_on_map_send)
+	map_view.closed.connect(_on_map_closed)
 
 	_refresh_all_tiles()
 	_update_drive_texts()
@@ -207,6 +235,7 @@ func _open_shop() -> void:
 	rig.set_process_input(false)
 	rig.set_process_unhandled_input(false)
 	shop_button.hide()
+	map_button.hide()
 	shop.open(state)
 
 func _on_shop_closed() -> void:
@@ -215,8 +244,79 @@ func _on_shop_closed() -> void:
 	rig.set_process_input(true)
 	rig.set_process_unhandled_input(true)
 	shop_button.show()
+	map_button.show()
 	_update_drive_texts()
 	_update_ui()
+
+# ---- Farm map ----
+
+func _open_map() -> void:
+	if hud.has_method("hide"):
+		hud.hide()
+	rig.set_process_input(false)
+	rig.set_process_unhandled_input(false)
+	shop_button.hide()
+	map_button.hide()
+	map_view.open(state, _active_id(), _machine_name(_active_id()), _work_plot())
+
+func _on_map_closed() -> void:
+	if hud.has_method("show"):
+		hud.show()
+	rig.set_process_input(true)
+	rig.set_process_unhandled_input(true)
+	shop_button.show()
+	map_button.show()
+	_update_ui()
+
+# A plot was bought on the map: draw its tiles, and save.
+func _on_plot_bought(id: String) -> void:
+	grid.build_plot(id)
+	_refresh_all_tiles()
+	dirty = true
+	_save()
+
+# "Look at plot": the camera moves over the plot and the autopilot will work it.
+func _on_map_go(id: String) -> void:
+	if driving:
+		_enter_manage()
+	var r := PlotData.rect_of(id)
+	rig.position = Vector3(r.get_center().x, 0.0, r.get_center().y)
+	rig.dist = clampf(maxf(r.size.x, r.size.y) * 1.2, 14.0, 58.0)
+	rig.pitch = 0.9
+	rig.apply_view()
+	if state.owns_plot(id):
+		focus_plot = id
+		hud.set_message("%s: autopilot will work this plot" % str(PlotData.get_plot(id)["name"]), 3500)
+	else:
+		hud.set_message("%s is for sale: open the map to buy it" % str(PlotData.get_plot(id)["name"]), 3500)
+
+# "Send machine here": the machine you are using drives to the plot on autopilot (no work).
+func _on_map_send(id: String) -> void:
+	var mid := _active_id()
+	var ap = machines[mid]["ap"]
+	if float(state.tractor["fuel"]) < 1.0:
+		hud.set_message("Refuel first")
+		return
+	if ap.active:
+		_stop_auto("")
+	focus_plot = id
+	state.last_work_tile = -1
+	if ap.travel_to_plot(state.tractor, id):
+		hud.set_auto_active(true)
+		hud.set_message("%s is driving to %s" % [_machine_name(mid), str(PlotData.get_plot(id)["name"])], 3500)
+	else:
+		hud.set_message("Cannot drive there")
+
+# The plot the autopilot works: the one picked on the map or by tapping a tile, otherwise the
+# plot the machine is in (or nearest to).
+func _work_plot() -> String:
+	if focus_plot != "" and state.owns_plot(focus_plot):
+		return focus_plot
+	var m: Dictionary = state.tractor
+	var here := FarmLayout.plot_at(float(m["x"]), float(m["z"]), state.plots)
+	if here != "":
+		return here
+	return FarmLayout.nearest_plot(float(m["x"]), float(m["z"]), state.plots)
 
 # A machine was bought or put to use: refresh the machines, texts and the save.
 func _on_shop_changed() -> void:
@@ -407,8 +507,9 @@ func _toggle_auto() -> void:
 		hud.set_message("Pick a tool first")
 		return
 	var now := _now()
-	var skip := _rows_taken(_active_id(), kind)
-	var jobs: Array = state.jobs_for(kind, now, skip)
+	var plot := _work_plot()
+	var skip := _rows_taken(_active_id(), kind, plot)
+	var jobs: Array = state.jobs_for(kind, now, skip, plot)
 	if jobs.is_empty():
 		if skip.is_empty():
 			hud.set_message("Nothing to do for this tool")
@@ -424,12 +525,12 @@ func _toggle_auto() -> void:
 	autopilot.job_worked = 0
 	autopilot.pass_worked = 0
 	var width: int = state.active_width()
-	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"]), width, GameStateScript.ROWS):
+	if not autopilot.start(state.tractor, jobs, float(cfg["work_offset"]), width, int(PlotData.get_plot(plot)["rows"]), plot):
 		return
 	hud.set_auto_active(true)
-	var note := "Autopilot on"
+	var note := "Autopilot on: %s" % str(PlotData.get_plot(plot)["name"])
 	if width > 1:
-		note = "Autopilot on: %d lanes, %d tiles wide" % [autopilot.lane_count, width]
+		note = "Autopilot on: %s, %d lanes, %d tiles wide" % [str(PlotData.get_plot(plot)["name"]), autopilot.lane_count, width]
 	var need: float = autopilot.estimate_fuel(state.tractor, cfg)
 	if float(state.tractor["fuel"]) < need:
 		note = "Autopilot on - low fuel (need ~%d)" % int(ceil(need))
@@ -444,13 +545,13 @@ func _toggle_auto() -> void:
 
 # Field rows other machines of the same kind are already working, so a second machine takes
 # the rest of the field instead of driving into the first.
-func _rows_taken(except_id: String, kind: String) -> Array:
+func _rows_taken(except_id: String, kind: String, plot: String = "farm") -> Array:
 	var rows: Array = []
 	for oid in machines:
 		if oid == except_id:
 			continue
 		var oap = machines[oid]["ap"]
-		if oap.active and oap.kind == kind:
+		if oap.active and oap.kind == kind and oap.plot_id == plot:
 			for r in oap.reserved_rows:
 				if not rows.has(r):
 					rows.append(r)
@@ -468,6 +569,8 @@ func _auto_summary(kind: String, ap = null) -> String:
 	if ap == null:
 		ap = autopilot
 	var text := ""
+	if kind == "travel":
+		return "Arrived at %s" % str(PlotData.get_plot(ap.plot_id)["name"]) if ap.finished else "%s" % ap.message
 	if ap.finished:
 		text = "Autopilot finished: %d tiles" % ap.job_worked
 	else:
@@ -514,12 +617,12 @@ func _auto_ended(id: String = "") -> void:
 	if ap.finished:
 		# More work may have appeared during the pass (crops ripening, missed
 		# tiles). Look again and go where work is still needed, up to 3 passes.
-		var jobs: Array = state.jobs_for(kind, _now(), _rows_taken(id, kind))
-		if not jobs.is_empty() and ap.pass_worked > 0 and ap.pass_no < 3:
+		var jobs: Array = state.jobs_for(kind, _now(), _rows_taken(id, kind, ap.plot_id), ap.plot_id)
+		if kind != "travel" and not jobs.is_empty() and ap.pass_worked > 0 and ap.pass_no < 3:
 			ap.pass_no += 1
 			ap.pass_worked = 0
 			m["_lwt"] = -1
-			if ap.start(m, jobs, float(_cfg_for(id)["work_offset"]), state.machine_width(m), GameStateScript.ROWS):
+			if ap.start(m, jobs, float(_cfg_for(id)["work_offset"]), state.machine_width(m), int(PlotData.get_plot(ap.plot_id)["rows"]), ap.plot_id):
 				_say(id, "Autopilot: pass %d" % ap.pass_no)
 				return
 	machines[id]["view"].set_raised(true)
@@ -611,6 +714,8 @@ func _on_tapped(pos: Vector2) -> void:
 		idx = grid.world_to_tile(hit)
 	var old := selected
 	selected = idx
+	if selected >= 0:
+		focus_plot = str(state.tiles[selected]["plot"])
 	if old >= 0:
 		_refresh_tile(old)
 	if selected >= 0:
@@ -626,6 +731,8 @@ func _handle_reset() -> void:
 			machines[id]["view"].queue_free()
 		machines = {}
 		state = GameStateScript.new()
+		grid.reset_plots()
+		focus_plot = ""
 		selected = -1
 		_refresh_all_tiles()
 		_sync_machines()
@@ -735,7 +842,7 @@ func _update_ui() -> void:
 	var text := "Tap a tile"
 	if selected >= 0:
 		var t: Dictionary = state.tiles[selected]
-		var head := "Field tile %d, %d\n" % [t["col"] + 1, t["row"] + 1]
+		var head := "%s: tile %d, %d\n" % [str(PlotData.get_plot(str(t["plot"]))["name"]), t["col"] + 1, t["row"] + 1]
 		match t["state"]:
 			"unploughed":
 				text = head + "Soil: unploughed"
