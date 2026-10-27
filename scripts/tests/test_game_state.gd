@@ -1358,19 +1358,19 @@ func _init() -> void:
 	var pl_ids: Array = PlotData.ids()
 	var pl_ok := true
 	var pl_sizes := {}
-	for pa in pl_ids:
-		var ra: Rect2 = PlotData.rect_of(pa)
-		var pd: Dictionary = PlotData.get_plot(pa)
-		if PlotData.tile_count(pa) <= 0 or (pa != "farm" and PlotData.price_of(pa) <= 0):
+	for pl_a in pl_ids:
+		var pl_ra: Rect2 = PlotData.rect_of(pl_a)
+		var pl_pd: Dictionary = PlotData.get_plot(pl_a)
+		if PlotData.tile_count(pl_a) <= 0 or (pl_a != "farm" and PlotData.price_of(pl_a) <= 0):
 			pl_ok = false
-		# every plot touches the main road: north plots end at the road side, south plots start there
-		var touches: bool = absf(ra.end.y - PlotData.NORTH_EDGE_Z) < 0.01 if pd["side"] == "n" else absf(ra.position.y - PlotData.SOUTH_EDGE_Z) < 0.01
-		if not touches or absf(ra.position.x) > PlotData.WORLD_HALF or absf(ra.end.x) > PlotData.WORLD_HALF:
+		# every plot pl_touches the main road: north plots end at the road side, south plots start there
+		var pl_touches: bool = absf(pl_ra.end.y - PlotData.NORTH_EDGE_Z) < 0.01 if pl_pd["side"] == "n" else absf(pl_ra.position.y - PlotData.SOUTH_EDGE_Z) < 0.01
+		if not pl_touches or absf(pl_ra.position.x) > PlotData.WORLD_HALF or absf(pl_ra.end.x) > PlotData.WORLD_HALF:
 			pl_ok = false
-		for pb in pl_ids:
-			if pb != pa and ra.intersects(PlotData.rect_of(pb)):
+		for pl_b in pl_ids:
+			if pl_b != pl_a and pl_ra.intersects(PlotData.rect_of(pl_b)):
 				pl_ok = false
-		pl_sizes[pd["size"]] = true
+		pl_sizes[pl_pd["size"]] = true
 	_check(pl_ok, "plots have tiles and prices, touch the road, stay in the land and do not overlap")
 	_check(pl_sizes.has("Medium") and pl_sizes.has("Large") and pl_sizes.has("Very large"), "plots come in several sizes")
 	_check(PlotData.price_of("e3") > PlotData.price_of("e2") and PlotData.price_of("e2") > PlotData.price_of("e1"), "bigger plots cost more")
@@ -1433,12 +1433,12 @@ func _init() -> void:
 	var pl_lane_ok := true
 	var pl_lanes := 0
 	var pl_road := false
-	for w in pl_ap.wps:
-		if bool(w["work"]):
+	for pl_w in pl_ap.wps:
+		if bool(pl_w["work"]):
 			pl_lanes += 1
-			if float(w["z"]) < pl_rect.position.y or float(w["z"]) > pl_rect.end.y:
+			if float(pl_w["z"]) < pl_rect.position.y or float(pl_w["z"]) > pl_rect.end.y:
 				pl_lane_ok = false
-		if absf(float(w["z"]) - 3.6) < 0.01:
+		if absf(float(pl_w["z"]) - 3.6) < 0.01:
 			pl_road = true
 	_check(pl_lane_ok and pl_lanes == 10, "autopilot works the 10 rows of the plot")
 	_check(pl_road, "a machine from the yard drives out along the main road")
