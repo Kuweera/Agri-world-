@@ -369,7 +369,7 @@ func _init() -> void:
 	tbad["tractor"]["implement"] = "bogus"
 	_check(btest.from_dict(tbad) != "", "rejects unknown tool")
 	tbad = tgood.duplicate(true)
-	tbad["tractor"]["x"] = 50.0
+	tbad["tractor"]["x"] = 150.0
 	_check(btest.from_dict(tbad) != "", "rejects tractor outside the land")
 	tbad = tgood.duplicate(true)
 	tbad.erase("tractor")
