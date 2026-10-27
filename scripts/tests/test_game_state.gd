@@ -26,6 +26,7 @@ const MachineModels := preload("res://scripts/machine_models.gd")
 const MachineryShop := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const Hitbox := preload("res://scripts/hitbox.gd")
+const PlotData := preload("res://scripts/plot_data.gd")
 
 var failures := 0
 
@@ -736,7 +737,7 @@ func _init() -> void:
 	_check(dr_work.tiles[0]["state"] == "ploughed", "wide plough ploughs the tile")
 
 	# --- Wide work and fertilizer ---
-	_check(GameState.SCHEMA_VERSION == 4, "save format is version 4")
+	_check(GameState.SCHEMA_VERSION == 5, "save format is version 5")
 	var fw_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	var fw_sum := {}
 	var fw_cnt := {}
@@ -1345,9 +1346,110 @@ func _init() -> void:
 		scen_tris += sa[Mesh.ARRAY_VERTEX].size() / 3
 		if not mi.mesh.get_aabb().size.is_finite():
 			scen_ok = false
-	_check(scen_ok and holder.get_child_count() == 6, "scenery builds 6 finite meshes")
+	_check(scen_ok and holder.get_child_count() == 7, "scenery builds 7 finite meshes")
 	_check(scen_tris < 20000, "scenery triangle budget (%d)" % scen_tris)
 	holder.free()
+
+
+	# --- Plots ---
+	var pl := GameState.new()
+	_check(pl.plots == ["farm"] and pl.tiles.size() == 64 and pl.tiles[0]["plot"] == "farm", "a new game owns only the home field")
+	_check(PlotData.price_of("farm") == 0 and PlotData.price_of("nope") == 0, "the home field costs nothing")
+	var pl_ids: Array = PlotData.ids()
+	var pl_ok := true
+	var pl_sizes := {}
+	for pa in pl_ids:
+		var ra: Rect2 = PlotData.rect_of(pa)
+		var pd: Dictionary = PlotData.get_plot(pa)
+		if PlotData.tile_count(pa) <= 0 or (pa != "farm" and PlotData.price_of(pa) <= 0):
+			pl_ok = false
+		# every plot touches the main road: north plots end at the road side, south plots start there
+		var touches: bool = absf(ra.end.y - PlotData.NORTH_EDGE_Z) < 0.01 if pd["side"] == "n" else absf(ra.position.y - PlotData.SOUTH_EDGE_Z) < 0.01
+		if not touches or absf(ra.position.x) > PlotData.WORLD_HALF or absf(ra.end.x) > PlotData.WORLD_HALF:
+			pl_ok = false
+		for pb in pl_ids:
+			if pb != pa and ra.intersects(PlotData.rect_of(pb)):
+				pl_ok = false
+		pl_sizes[pd["size"]] = true
+	_check(pl_ok, "plots have tiles and prices, touch the road, stay in the land and do not overlap")
+	_check(pl_sizes.has("Medium") and pl_sizes.has("Large") and pl_sizes.has("Very large"), "plots come in several sizes")
+	_check(PlotData.price_of("e3") > PlotData.price_of("e2") and PlotData.price_of("e2") > PlotData.price_of("e1"), "bigger plots cost more")
+	_check(PlotData.tile_count("e1") > GameState.COLS * GameState.ROWS, "new plots are bigger than the home field")
+	_check(pl.can_buy_plot("e1") == "Not enough money", "cannot buy a plot without the money")
+	_check(pl.buy_plot("nope") == "Unknown plot", "unknown plot")
+	pl.money = 100000
+	var pl_price: int = PlotData.price_of("e1")
+	_check(pl.buy_plot("e1") == "" and pl.money == 100000 - pl_price, "buying a plot takes its price")
+	_check(pl.plots == ["farm", "e1"] and pl.tiles.size() == 64 + PlotData.tile_count("e1"), "the new plot's tiles are added")
+	_check(pl.tiles[64]["plot"] == "e1" and pl.tiles[64]["col"] == 0 and pl.tiles[64 + 13]["row"] == 1 and pl.tiles[64 + 13]["col"] == 1, "plot tiles know their plot, column and row")
+	_check(pl.buy_plot("e1") == "You already own this plot", "a plot can only be bought once")
+	var pl_x: float = PlotData.col_x("e1", 3)
+	var pl_z: float = PlotData.row_z("e1", 2)
+	_check(FarmLayout.world_to_tile(pl_x, pl_z, pl.plots) == 64 + 2 * 12 + 3, "a point on the bought plot maps to its tile")
+	_check(FarmLayout.world_to_tile(pl_x, pl_z) == -1, "the same point is no tile while the plot is not owned")
+	_check(FarmLayout.plot_at(pl_x, pl_z, pl.plots) == "e1" and FarmLayout.plot_at(0.0, -4.0, pl.plots) == "farm", "plot_at finds the plot")
+	_check(FarmLayout.tile_info(64 + 13, pl.plots)["plot"] == "e1" and FarmLayout.tile_info(5, pl.plots)["plot"] == "farm", "tile_info maps an index to its plot")
+	_check(FarmLayout.nearest_plot(30.0, 0.0, pl.plots) == "e1", "nearest plot")
+	_check(FarmLayout.col_x(3) == PlotData.col_x("farm", 3) and FarmLayout.row_z(5) == PlotData.row_z("farm", 5), "home field positions are unchanged")
+	# status, work and jobs on the new plot
+	var pl_t0 := 5000.0
+	_check(pl.rows_with_work("plough", pl_t0, "e1").size() == 10 and pl.rows_with_work("plough", pl_t0).size() == 8, "plough work is counted per plot")
+	_check(pl.rows_with_work("plough", pl_t0, "s1").is_empty() and pl.jobs_for("plough", pl_t0, [], "s1").is_empty(), "no work on a plot that is not owned")
+	var pl_jobs: Array = pl.jobs_for("plough", pl_t0, [], "e1")
+	_check(pl_jobs.size() == 10 and int(pl_jobs[0]["c1"]) == 11, "jobs cover the rows and columns of the plot")
+	_check(pl.plough(64) == "" and pl.plant(64, "maize", pl_t0) == "", "ploughing and planting on a new plot")
+	var pl_st: Dictionary = pl.plot_status("e1", pl_t0)
+	_check(int(pl_st["growing"]) == 1 and int(pl_st["ploughed"]) == 0 and int(pl_st["empty"]) == 119 and not bool(pl_st["ready"]), "plot status counts growing tiles")
+	var pl_grow: float = float(CropData.CROPS["maize"]["grow_seconds"])
+	pl_st = pl.plot_status("e1", pl_t0 + pl_grow + 1.0)
+	_check(int(pl_st["ripe"]) == 1 and bool(pl_st["ready"]), "plot status shows ripe tiles as ready")
+	_check(int(pl.plot_status("farm", pl_t0)["ripe"]) == 0 and int(pl.plot_status("s1", pl_t0)["tiles"]) == 0, "status of other plots")
+	# save and load
+	var pl_d: Dictionary = pl.to_dict()
+	var pl2 := GameState.new()
+	_check(pl2.from_dict(pl_d) == "" and pl2.plots == ["farm", "e1"] and pl2.tiles.size() == pl.tiles.size(), "a save with a bought plot loads")
+	_check(pl2.tiles[64]["state"] == "growing" and pl2.tiles[64]["plot"] == "e1", "the plot's crops come back")
+	var pl_old: Dictionary = GameState.new().to_dict()
+	pl_old.erase("plots")
+	pl_old["schema_version"] = 4
+	var pl3 := GameState.new()
+	_check(pl3.from_dict(pl_old) == "" and pl3.plots == ["farm"], "an old save (version 4) loads with the home field")
+	var pl_bad: Dictionary = pl.to_dict()
+	pl_bad["plots"] = ["e1", "farm"]
+	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "the home field must come first")
+	pl_bad["plots"] = ["farm", "e1", "e1"]
+	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "a plot cannot be listed twice")
+	pl_bad["plots"] = ["farm", "mars"]
+	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "an unknown plot is refused")
+	pl_bad["plots"] = ["farm", "e1"]
+	pl_bad["tiles"] = pl_bad["tiles"].slice(0, 64)
+	_check(GameState.new().from_dict(pl_bad) == "Bad tiles", "the tile count must match the plots")
+	# autopilot on another plot, and travelling to a plot
+	var pl_ap := AutoPilotScript.new()
+	pl.tractor["x"] = 0.0
+	pl.tractor["z"] = 8.0
+	_check(pl_ap.start(pl.tractor, pl_jobs, 1.8, 1, 10, "e1") and pl_ap.plot_id == "e1", "autopilot starts on another plot")
+	var pl_rect: Rect2 = PlotData.rect_of("e1")
+	var pl_lane_ok := true
+	var pl_lanes := 0
+	var pl_road := false
+	for w in pl_ap.wps:
+		if bool(w["work"]):
+			pl_lanes += 1
+			if float(w["z"]) < pl_rect.position.y or float(w["z"]) > pl_rect.end.y:
+				pl_lane_ok = false
+		if absf(float(w["z"]) - 3.6) < 0.01:
+			pl_road = true
+	_check(pl_lane_ok and pl_lanes == 10, "autopilot works the 10 rows of the plot")
+	_check(pl_road, "a machine from the yard drives out along the main road")
+	var pl_tr := AutoPilotScript.new()
+	_check(pl_tr.travel_to_plot(pl.tractor, "w3") and pl_tr.kind == "travel" and pl_tr.active, "travel autopilot starts")
+	var pl_last: Dictionary = pl_tr.wps[pl_tr.wps.size() - 1]
+	_check(PlotData.rect_of("w3").has_point(Vector2(float(pl_last["x"]), float(pl_last["z"]))) and not bool(pl_last["work"]), "travel ends inside the plot without working")
+	_check(not pl_tr.travel_to_plot(pl.tractor, "mars"), "cannot travel to an unknown plot")
+	var pl_tr2 := AutoPilotScript.new()
+	pl.tractor["z"] = 3.6
+	_check(pl_tr2.travel_to_plot(pl.tractor, "s2") and float(pl_tr2.wps[pl_tr2.wps.size() - 1]["z"]) > 5.2, "travel to a south plot ends south of the road")
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)
