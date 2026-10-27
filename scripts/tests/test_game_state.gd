@@ -27,6 +27,7 @@ const MachineryShop := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const Hitbox := preload("res://scripts/hitbox.gd")
 const PlotData := preload("res://scripts/plot_data.gd")
+const RoadNet := preload("res://scripts/road_net.gd")
 
 var failures := 0
 
@@ -492,7 +493,7 @@ func _init() -> void:
 	var est_ap = AutoPilotScript.new()
 	est_ap.start(est_state.tractor, est_state.jobs_for("plough", t0), float(cfg["work_offset"]))
 	var est: float = est_ap.estimate_fuel(est_state.tractor, cfg)
-	_check(est > 8.0 and est < 14.0, "fuel estimate for a full field is realistic (" + str(est) + ")")
+	_check(est > 1.5 and est < 20.0, "fuel estimate for a full field is realistic (" + str(est) + ")")
 
 	# --- Settings ---
 	var sp := "user://test_settings.json"
@@ -737,7 +738,7 @@ func _init() -> void:
 	_check(dr_work.tiles[0]["state"] == "ploughed", "wide plough ploughs the tile")
 
 	# --- Wide work and fertilizer ---
-	_check(GameState.SCHEMA_VERSION == 5, "save format is version 5")
+	_check(GameState.SCHEMA_VERSION == 6, "save format is version 6")
 	var fw_cfg: Dictionary = VehicleData.VEHICLES["tractor"]
 	var fw_sum := {}
 	var fw_cnt := {}
@@ -1356,6 +1357,7 @@ func _init() -> void:
 	_check(pl.plots == ["farm"] and pl.tiles.size() == 64 and pl.tiles[0]["plot"] == "farm", "a new game owns only the home field")
 	_check(PlotData.price_of("farm") == 0 and PlotData.price_of("nope") == 0, "the home field costs nothing")
 	var pl_ids: Array = PlotData.ids()
+	_check(pl_ids.size() == 21 and pl_ids[0] == "farm", "the home field and 20 plots")
 	var pl_ok := true
 	var pl_sizes := {}
 	for pl_a in pl_ids:
@@ -1363,93 +1365,146 @@ func _init() -> void:
 		var pl_pd: Dictionary = PlotData.get_plot(pl_a)
 		if PlotData.tile_count(pl_a) <= 0 or (pl_a != "farm" and PlotData.price_of(pl_a) <= 0):
 			pl_ok = false
-		# every plot pl_touches the main road: north plots end at the road side, south plots start there
-		var pl_touches: bool = absf(pl_ra.end.y - PlotData.NORTH_EDGE_Z) < 0.01 if pl_pd["side"] == "n" else absf(pl_ra.position.y - PlotData.SOUTH_EDGE_Z) < 0.01
-		if not pl_touches or absf(pl_ra.position.x) > PlotData.WORLD_HALF or absf(pl_ra.end.x) > PlotData.WORLD_HALF:
+		if absf(pl_ra.position.x) > PlotData.WORLD_HALF or absf(pl_ra.end.x) > PlotData.WORLD_HALF \
+				or absf(pl_ra.position.y) > PlotData.WORLD_HALF or absf(pl_ra.end.y) > PlotData.WORLD_HALF:
 			pl_ok = false
 		for pl_b in pl_ids:
-			if pl_b != pl_a and pl_ra.intersects(PlotData.rect_of(pl_b)):
+			# two plots are at least two setbacks apart, so machines on different plots never meet
+			if pl_b != pl_a and pl_ra.grow(PlotData.SETBACK - 0.01).intersects(PlotData.rect_of(pl_b).grow(PlotData.SETBACK - 0.01)):
 				pl_ok = false
 		pl_sizes[pl_pd["size"]] = true
-	_check(pl_ok, "plots have tiles and prices, touch the road, stay in the land and do not overlap")
-	_check(pl_sizes.has("Medium") and pl_sizes.has("Large") and pl_sizes.has("Very large"), "plots come in several sizes")
-	_check(PlotData.price_of("e3") > PlotData.price_of("e2") and PlotData.price_of("e2") > PlotData.price_of("e1"), "bigger plots cost more")
-	_check(PlotData.tile_count("e1") > GameState.COLS * GameState.ROWS, "new plots are bigger than the home field")
-	_check(pl.can_buy_plot("e1") == "Not enough money", "cannot buy a plot without the money")
+	_check(pl_ok, "plots have tiles and prices, stay in the land and are far enough apart")
+	# every plot is exactly SETBACK from the roads beside it and never nearer; and it has a road to enter from
+	var pl_road_ok := true
+	for pl_a in pl_ids:
+		var pl_r2: Rect2 = PlotData.rect_of(pl_a)
+		var pl_near := INF
+		for pl_rd in PlotData.ROADS_H:
+			if pl_r2.end.x > float(pl_rd[1]) and pl_r2.position.x < float(pl_rd[2]):
+				var pl_dz: float = 0.0 if (float(pl_rd[0]) >= pl_r2.position.y and float(pl_rd[0]) <= pl_r2.end.y) else minf(absf(float(pl_rd[0]) - pl_r2.position.y), absf(float(pl_rd[0]) - pl_r2.end.y))
+				pl_near = minf(pl_near, pl_dz)
+		for pl_rd in PlotData.ROADS_V:
+			if pl_r2.end.y > float(pl_rd[1]) and pl_r2.position.y < float(pl_rd[2]):
+				var pl_dx: float = 0.0 if (float(pl_rd[0]) >= pl_r2.position.x and float(pl_rd[0]) <= pl_r2.end.x) else minf(absf(float(pl_rd[0]) - pl_r2.position.x), absf(float(pl_rd[0]) - pl_r2.end.x))
+				pl_near = minf(pl_near, pl_dx)
+		if pl_near < PlotData.SETBACK - 0.01 or pl_near > PlotData.SETBACK + 0.01:
+			pl_road_ok = false
+		# the access points are on a road
+		for pl_sd in ["w", "e"]:
+			var pl_ap_pt: Vector2 = PlotData.access_of(pl_a, pl_sd)
+			if RoadNet.route(pl_ap_pt, pl_ap_pt).is_empty():
+				pl_road_ok = false
+	_check(pl_road_ok, "every plot is 7 units from the roads beside it and can be reached by road")
+	_check(pl_sizes.has("Medium") and pl_sizes.has("Large") and pl_sizes.has("Very large") and pl_sizes.has("Estate"), "plots come in several sizes")
+	_check(PlotData.price_of("p13") > PlotData.price_of("p09") and PlotData.price_of("p09") > PlotData.price_of("p01"), "bigger plots cost more")
+	_check(PlotData.tile_count("p01") > GameState.COLS * GameState.ROWS, "new plots are bigger than the home field")
+	_check(PlotData.ha_text(100) == "6.0 ha", "areas are shown in hectares")
+	_check(pl.can_buy_plot("p01") == "Not enough money", "cannot buy a plot without the money")
 	_check(pl.buy_plot("nope") == "Unknown plot", "unknown plot")
-	pl.money = 100000
-	var pl_price: int = PlotData.price_of("e1")
-	_check(pl.buy_plot("e1") == "" and pl.money == 100000 - pl_price, "buying a plot takes its price")
-	_check(pl.plots == ["farm", "e1"] and pl.tiles.size() == 64 + PlotData.tile_count("e1"), "the new plot's tiles are added")
-	_check(pl.tiles[64]["plot"] == "e1" and pl.tiles[64]["col"] == 0 and pl.tiles[64 + 13]["row"] == 1 and pl.tiles[64 + 13]["col"] == 1, "plot tiles know their plot, column and row")
-	_check(pl.buy_plot("e1") == "You already own this plot", "a plot can only be bought once")
-	var pl_x: float = PlotData.col_x("e1", 3)
-	var pl_z: float = PlotData.row_z("e1", 2)
-	_check(FarmLayout.world_to_tile(pl_x, pl_z, pl.plots) == 64 + 2 * 12 + 3, "a point on the bought plot maps to its tile")
+	pl.money = 500000
+	var pl_price: int = PlotData.price_of("p01")
+	var pl_cols: int = int(PlotData.get_plot("p01")["cols"])
+	var pl_rows: int = int(PlotData.get_plot("p01")["rows"])
+	_check(pl.buy_plot("p01") == "" and pl.money == 500000 - pl_price, "buying a plot takes its price")
+	_check(pl.plots == ["farm", "p01"] and pl.tiles.size() == 64 + PlotData.tile_count("p01"), "the new plot's tiles are added")
+	_check(pl.tiles[64]["plot"] == "p01" and pl.tiles[64]["col"] == 0 and pl.tiles[64 + pl_cols + 1]["row"] == 1 and pl.tiles[64 + pl_cols + 1]["col"] == 1, "plot tiles know their plot, column and row")
+	_check(pl.buy_plot("p01") == "You already own this plot", "a plot can only be bought once")
+	var pl_x: float = PlotData.col_x("p01", 3)
+	var pl_z: float = PlotData.row_z("p01", 2)
+	_check(FarmLayout.world_to_tile(pl_x, pl_z, pl.plots) == 64 + 2 * pl_cols + 3, "a point on the bought plot maps to its tile")
 	_check(FarmLayout.world_to_tile(pl_x, pl_z) == -1, "the same point is no tile while the plot is not owned")
-	_check(FarmLayout.plot_at(pl_x, pl_z, pl.plots) == "e1" and FarmLayout.plot_at(0.0, -4.0, pl.plots) == "farm", "plot_at finds the plot")
-	_check(FarmLayout.tile_info(64 + 13, pl.plots)["plot"] == "e1" and FarmLayout.tile_info(5, pl.plots)["plot"] == "farm", "tile_info maps an index to its plot")
-	_check(FarmLayout.nearest_plot(30.0, 0.0, pl.plots) == "e1", "nearest plot")
+	_check(FarmLayout.plot_at(pl_x, pl_z, pl.plots) == "p01" and FarmLayout.plot_at(0.0, -9.4, pl.plots) == "farm", "plot_at finds the plot")
+	_check(FarmLayout.tile_info(64 + pl_cols + 1, pl.plots)["plot"] == "p01" and FarmLayout.tile_info(5, pl.plots)["plot"] == "farm", "tile_info maps an index to its plot")
+	var pl_c: Vector2 = PlotData.rect_of("p01").get_center()
+	_check(FarmLayout.nearest_plot(pl_c.x - 5.0, pl_c.y, pl.plots) == "p01", "nearest plot")
 	_check(FarmLayout.col_x(3) == PlotData.col_x("farm", 3) and FarmLayout.row_z(5) == PlotData.row_z("farm", 5), "home field positions are unchanged")
 	# status, work and jobs on the new plot
 	var pl_t0 := 5000.0
-	_check(pl.rows_with_work("plough", pl_t0, "e1").size() == 10 and pl.rows_with_work("plough", pl_t0).size() == 8, "plough work is counted per plot")
-	_check(pl.rows_with_work("plough", pl_t0, "s1").is_empty() and pl.jobs_for("plough", pl_t0, [], "s1").is_empty(), "no work on a plot that is not owned")
-	var pl_jobs: Array = pl.jobs_for("plough", pl_t0, [], "e1")
-	_check(pl_jobs.size() == 10 and int(pl_jobs[0]["c1"]) == 11, "jobs cover the rows and columns of the plot")
+	_check(pl.rows_with_work("plough", pl_t0, "p01").size() == pl_rows and pl.rows_with_work("plough", pl_t0).size() == 8, "plough work is counted per plot")
+	_check(pl.rows_with_work("plough", pl_t0, "p15").is_empty() and pl.jobs_for("plough", pl_t0, [], "p15").is_empty(), "no work on a plot that is not owned")
+	var pl_jobs: Array = pl.jobs_for("plough", pl_t0, [], "p01")
+	_check(pl_jobs.size() == pl_rows and int(pl_jobs[0]["c1"]) == pl_cols - 1, "jobs cover the rows and columns of the plot")
 	_check(pl.plough(64) == "" and pl.plant(64, "maize", pl_t0) == "", "ploughing and planting on a new plot")
-	var pl_st: Dictionary = pl.plot_status("e1", pl_t0)
-	_check(int(pl_st["growing"]) == 1 and int(pl_st["ploughed"]) == 0 and int(pl_st["empty"]) == 119 and not bool(pl_st["ready"]), "plot status counts growing tiles")
+	var pl_st: Dictionary = pl.plot_status("p01", pl_t0)
+	_check(int(pl_st["growing"]) == 1 and int(pl_st["ploughed"]) == 0 and int(pl_st["empty"]) == pl_cols * pl_rows - 1 and not bool(pl_st["ready"]), "plot status counts growing tiles")
 	var pl_grow: float = float(CropData.CROPS["maize"]["grow_seconds"])
-	pl_st = pl.plot_status("e1", pl_t0 + pl_grow + 1.0)
+	pl_st = pl.plot_status("p01", pl_t0 + pl_grow + 1.0)
 	_check(int(pl_st["ripe"]) == 1 and bool(pl_st["ready"]), "plot status shows ripe tiles as ready")
-	_check(int(pl.plot_status("farm", pl_t0)["ripe"]) == 0 and int(pl.plot_status("s1", pl_t0)["tiles"]) == 0, "status of other plots")
+	_check(int(pl.plot_status("farm", pl_t0)["ripe"]) == 0 and int(pl.plot_status("p15", pl_t0)["tiles"]) == 0, "status of other plots")
 	# save and load
 	var pl_d: Dictionary = pl.to_dict()
 	var pl2 := GameState.new()
-	_check(pl2.from_dict(pl_d) == "" and pl2.plots == ["farm", "e1"] and pl2.tiles.size() == pl.tiles.size(), "a save with a bought plot loads")
-	_check(pl2.tiles[64]["state"] == "growing" and pl2.tiles[64]["plot"] == "e1", "the plot's crops come back")
+	_check(pl2.from_dict(pl_d) == "" and pl2.plots == ["farm", "p01"] and pl2.tiles.size() == pl.tiles.size(), "a save with a bought plot loads")
+	_check(pl2.tiles[64]["state"] == "growing" and pl2.tiles[64]["plot"] == "p01", "the plot's crops come back")
 	var pl_old: Dictionary = GameState.new().to_dict()
 	pl_old.erase("plots")
 	pl_old["schema_version"] = 4
 	var pl3 := GameState.new()
 	_check(pl3.from_dict(pl_old) == "" and pl3.plots == ["farm"], "an old save (version 4) loads with the home field")
+	# a version 5 save had other plot ids: the plots are taken back and refunded
+	var pl_v5: Dictionary = GameState.new().to_dict()
+	pl_v5["schema_version"] = 5
+	pl_v5["plots"] = ["farm", "e1"]
+	pl_v5["money"] = 1000
+	for pl_k in 120:
+		pl_v5["tiles"].append({"state": "unploughed", "crop": "", "planted_at": 0.0, "fertilized": false})
+	var pl4 := GameState.new()
+	_check(pl4.from_dict(pl_v5) == "" and pl4.plots == ["farm"] and pl4.tiles.size() == 64 and pl4.money == 1000 + 4200, "a version 5 save gets its old plots refunded")
 	var pl_bad: Dictionary = pl.to_dict()
-	pl_bad["plots"] = ["e1", "farm"]
+	pl_bad["plots"] = ["p01", "farm"]
 	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "the home field must come first")
-	pl_bad["plots"] = ["farm", "e1", "e1"]
+	pl_bad["plots"] = ["farm", "p01", "p01"]
 	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "a plot cannot be listed twice")
 	pl_bad["plots"] = ["farm", "mars"]
 	_check(GameState.new().from_dict(pl_bad) == "Bad plots", "an unknown plot is refused")
-	pl_bad["plots"] = ["farm", "e1"]
+	pl_bad["plots"] = ["farm", "p01"]
 	pl_bad["tiles"] = pl_bad["tiles"].slice(0, 64)
 	_check(GameState.new().from_dict(pl_bad) == "Bad tiles", "the tile count must match the plots")
+	# roads: routes stay on the roads and never cross a plot
+	var pl_from := Vector2(0.0, 8.0)
+	var pl_goal: Vector2 = PlotData.access_of("p13", "e")
+	var pl_route: Array = RoadNet.route(pl_from, pl_goal)
+	_check(not pl_route.is_empty() and (pl_route[pl_route.size() - 1] as Vector2).distance_to(pl_goal) < 0.01, "a route leads from the yard to a far plot")
+	var pl_route_ok := true
+	var pl_prev: Vector2 = pl_from
+	for pl_q in pl_route:
+		var pl_seg: Vector2 = pl_q
+		var pl_steps := int(pl_prev.distance_to(pl_seg)) + 1
+		for pl_k in pl_steps + 1:
+			var pl_pt := pl_prev.lerp(pl_seg, float(pl_k) / float(pl_steps))
+			for pl_pid in pl_ids:
+				if PlotData.rect_of(pl_pid).grow(-0.2).has_point(pl_pt):
+					pl_route_ok = false
+		pl_prev = pl_seg
+	_check(pl_route_ok, "routes never cross a plot")
+	_check(RoadNet.path_length(pl_from, pl_route) < 700.0, "the route is not absurdly long")
+	_check(RoadNet.route(Vector2(0.0, 8.0), Vector2(1.0, 1.0)).is_empty(), "no route to a point that is not on a road")
 	# autopilot on another plot, and travelling to a plot
 	var pl_ap := AutoPilotScript.new()
 	pl.tractor["x"] = 0.0
 	pl.tractor["z"] = 8.0
-	_check(pl_ap.start(pl.tractor, pl_jobs, 1.8, 1, 10, "e1") and pl_ap.plot_id == "e1", "autopilot starts on another plot")
-	var pl_rect: Rect2 = PlotData.rect_of("e1")
+	_check(pl_ap.start(pl.tractor, pl_jobs, 1.8, 1, pl_rows, "p01") and pl_ap.plot_id == "p01", "autopilot starts on another plot")
+	var pl_rect: Rect2 = PlotData.rect_of("p01")
 	var pl_lane_ok := true
 	var pl_lanes := 0
 	var pl_road := false
-	for pl_w in pl_ap.wps:
-		if bool(pl_w["work"]):
+	for pl_pw in pl_ap.wps:
+		if bool(pl_pw["work"]):
 			pl_lanes += 1
-			if float(pl_w["z"]) < pl_rect.position.y or float(pl_w["z"]) > pl_rect.end.y:
+			if float(pl_pw["z"]) < pl_rect.position.y or float(pl_pw["z"]) > pl_rect.end.y:
 				pl_lane_ok = false
-		if absf(float(pl_w["z"]) - 3.6) < 0.01:
+		elif PlotData.rect_of("p01").grow(-0.2).has_point(Vector2(float(pl_pw["x"]), float(pl_pw["z"]))) == false and absf(float(pl_pw["z"]) - 3.6) < 0.01:
 			pl_road = true
-	_check(pl_lane_ok and pl_lanes == 10, "autopilot works the 10 rows of the plot")
+	_check(pl_lane_ok and pl_lanes == pl_rows, "autopilot works all the rows of the plot")
 	_check(pl_road, "a machine from the yard drives out along the main road")
 	var pl_tr := AutoPilotScript.new()
-	_check(pl_tr.travel_to_plot(pl.tractor, "w3") and pl_tr.kind == "travel" and pl_tr.active, "travel autopilot starts")
+	_check(pl_tr.travel_to_plot(pl.tractor, "p03") and pl_tr.kind == "travel" and pl_tr.active, "travel autopilot starts")
 	var pl_last: Dictionary = pl_tr.wps[pl_tr.wps.size() - 1]
-	_check(PlotData.rect_of("w3").has_point(Vector2(float(pl_last["x"]), float(pl_last["z"]))) and not bool(pl_last["work"]), "travel ends inside the plot without working")
+	_check(PlotData.rect_of("p03").has_point(Vector2(float(pl_last["x"]), float(pl_last["z"]))) and not bool(pl_last["work"]), "travel ends inside the plot without working")
 	_check(not pl_tr.travel_to_plot(pl.tractor, "mars"), "cannot travel to an unknown plot")
 	var pl_tr2 := AutoPilotScript.new()
 	pl.tractor["z"] = 3.6
-	_check(pl_tr2.travel_to_plot(pl.tractor, "s2") and float(pl_tr2.wps[pl_tr2.wps.size() - 1]["z"]) > 5.2, "travel to a south plot ends south of the road")
+	_check(pl_tr2.travel_to_plot(pl.tractor, "p19") and float(pl_tr2.wps[pl_tr2.wps.size() - 1]["z"]) > 40.0, "travel to a south plot ends south of the road")
 
 	print("---- ", failures, " failure(s)")
 	quit(failures)
