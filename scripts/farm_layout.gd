@@ -11,7 +11,7 @@ const COLS := 8
 const ROWS := 8
 const PITCH := 1.5
 const FIELD_CENTER_X := 0.0
-const FIELD_CENTER_Z := -4.0
+const FIELD_CENTER_Z := -9.4   # = PlotData home plot cz
 const HOME_ONLY := ["farm"]
 
 # Index of a plot's first tile, or -1 if it is not in `owned`.

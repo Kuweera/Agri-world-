@@ -17,10 +17,12 @@ extends RefCounted
 
 const FarmLayout := preload("res://scripts/farm_layout.gd")
 const PlotData := preload("res://scripts/plot_data.gd")
+const RoadNet := preload("res://scripts/road_net.gd")
 
 const MARGIN := 0.3        # lane runs this far past the first/last tile
-const CORRIDOR_Z := 3.6    # free strip between the field and the farmhouse
+const CORRIDOR_Z := 3.6    # the main road
 const YARD_Z := 3.7        # tractor further south than this is in the yard
+const NEAR_PLOT := 4.0     # within this distance of a plot a machine drives to its lanes directly
 const PIVOT_RATE := 2.0    # radians per second
 const ARRIVE := 0.08
 const BLOCK_WAIT := 8.0   # seconds to wait for another machine to move before giving up
@@ -100,27 +102,41 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 	if absf(tz - last_z) < absf(tz - first_z):
 		list.reverse()
 
-	# First lane runs away from the side the tractor is on.
 	var first: Dictionary = list[0]
 	var mid := (FarmLayout.col_x(int(first["c0"]), plot_id) + FarmLayout.col_x(int(first["c1"]), plot_id)) / 2.0
+	var first_row_z := FarmLayout.row_z(int(first["row"]), plot_id)
+	# Far from the plot: drive along the roads and enter the lane from the road beside the plot.
+	var near := PlotData.rect_of(plot_id).grow(NEAR_PLOT).has_point(Vector2(tx, tz))
+	var from := Vector2(tx, tz)
+	var route: Array = []
+	var access := Vector2.ZERO
+	# First lane runs away from the side the tractor is on (or the side it enters from).
 	var dir := -1 if tx >= mid else 1
+	if not near:
+		var aw := PlotData.access_of(plot_id, "w")
+		var ae := PlotData.access_of(plot_id, "e")
+		var rw: Array = RoadNet.route(from, aw)
+		var re: Array = RoadNet.route(from, ae)
+		if RoadNet.path_length(from, rw) <= RoadNet.path_length(from, re):
+			route = rw
+			access = aw
+			dir = 1
+		else:
+			route = re
+			access = ae
+			dir = -1
+		if route.is_empty():
+			near = true   # no road found: go straight
+			dir = -1 if tx >= mid else 1
 	var sx := _lane_x(first, dir, work_offset).x
 	var x0 := maxf(tx, sx) if dir < 0 else minf(tx, sx)
-	var first_row_z := FarmLayout.row_z(int(first["row"]), plot_id)
-	# Far from the plot (another plot, or the yard of a distant plot): use the main road.
-	var near := PlotData.rect_of(plot_id).grow(10.0).has_point(Vector2(tx, tz))
 
 	wps = []
 	if not near:
-		if absf(tz - CORRIDOR_Z) > 0.3:
-			_add(tx, CORRIDOR_Z, false)
-		_add(sx, CORRIDOR_Z, false)
-		_add(sx, first_row_z, false)
-	elif tz > YARD_Z:
-		# In the yard: go round through the corridor in front of the house.
-		_add(tx, CORRIDOR_Z, false)
-		_add(x0, CORRIDOR_Z, false)
-		_add(x0, first_row_z, false)
+		for p in route:
+			_add(p.x, p.y, false)
+		_add(access.x, first_row_z, false)   # along the road to the row
+		_add(sx, first_row_z, false)         # and into the plot along it
 	else:
 		_add(x0, tz, false)
 		_add(x0, first_row_z, false)
@@ -151,20 +167,27 @@ func start(tr: Dictionary, jobs: Array, work_offset: float = 1.8, width: int = 1
 	message = ""
 	return true
 
-# Drives to a plot without working: out of the yard onto the main road, along it to the plot's
-# gate, then a few units into the plot. kind is "travel" so the game knows nothing is worked.
+# Drives to a plot without working: onto the roads, along them to the road beside the plot, then
+# into the middle of the plot. kind is "travel" so the game knows nothing is worked.
 func travel_to_plot(tr: Dictionary, id: String) -> bool:
 	if not PlotData.has_plot(id):
 		return false
-	var g := PlotData.gate_of(id)
-	var inside := -3.0 if str(PlotData.get_plot(id)["side"]) == "n" else 3.0
-	var tx := float(tr["x"])
-	var tz := float(tr["z"])
+	var from := Vector2(float(tr["x"]), float(tr["z"]))
+	var aw := PlotData.access_of(id, "w")
+	var ae := PlotData.access_of(id, "e")
+	var rw: Array = RoadNet.route(from, aw)
+	var re: Array = RoadNet.route(from, ae)
+	var route: Array = rw
+	var access := aw
+	if RoadNet.path_length(from, re) < RoadNet.path_length(from, rw):
+		route = re
+		access = ae
+	if route.is_empty():
+		return false
 	wps = []
-	if absf(tz - CORRIDOR_Z) > 0.3:
-		_add(tx, CORRIDOR_Z, false)
-	_add(g.x, CORRIDOR_Z, false)
-	_add(g.x, g.y + inside, false)
+	for p in route:
+		_add(p.x, p.y, false)
+	_add(float(PlotData.get_plot(id)["cx"]), access.y, false)   # into the middle of the plot
 	plot_id = id
 	kind = "travel"
 	lane_count = 0

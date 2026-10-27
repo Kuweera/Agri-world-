@@ -2,7 +2,7 @@ extends RefCounted
 # Vehicle and implement configuration. All numbers live here.
 
 # Tractor may not leave this square (inside the fence).
-const DRIVE_BOUNDS := 89.0
+const DRIVE_BOUNDS := 200.0
 
 # Solid rectangles as Rect2(x, z, width, depth). The farmhouse for now.
 const OBSTACLES := [Rect2(-2.7, 5.3, 5.4, 4.4)]
@@ -23,12 +23,12 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 3000,
 		"power_hp": 75,
-		"max_speed": 4.0,        # units per second
+		"max_speed": 9.0,        # units per second
 		"reverse_factor": 0.5,   # reverse is half speed
-		"accel": 5.0,
+		"accel": 7.0,
 		"turn_rate": 1.5,        # radians per second at full steering
 		"fuel_capacity": 20.0,
-		"fuel_use": 0.2,         # units per second while moving
+		"fuel_use": 0.08,         # units per second while moving
 		"fuel_price": 2,         # money per unit
 		"work_offset": 1.8,      # implement works this far behind the tractor
 		"model_path": "res://assets/models/Tractor.glb",
@@ -43,12 +43,12 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 9000,
 		"power_hp": 160,
-		"max_speed": 5.0,
+		"max_speed": 11.0,
 		"reverse_factor": 0.5,
-		"accel": 5.5,
+		"accel": 7.5,
 		"turn_rate": 1.3,
 		"fuel_capacity": 40.0,
-		"fuel_use": 0.35,
+		"fuel_use": 0.14,
 		"fuel_price": 2,
 		"work_offset": 2.1,
 		"model_path": "res://assets/models/Tractor_Heavy.glb",
@@ -63,12 +63,12 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 18000,
 		"power_hp": 280,
-		"max_speed": 4.6,
+		"max_speed": 9.5,
 		"reverse_factor": 0.5,
-		"accel": 5.0,
+		"accel": 7.0,
 		"turn_rate": 1.1,
 		"fuel_capacity": 70.0,
-		"fuel_use": 0.5,
+		"fuel_use": 0.2,
 		"fuel_price": 2,
 		"work_offset": 2.1,
 		"model_path": "res://assets/models/Tractor_Heavy_Tracked.glb",
@@ -84,12 +84,12 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 0,              # free: the combine you start with
 		"power_hp": 120,
-		"max_speed": 3.0,
+		"max_speed": 6.0,
 		"reverse_factor": 0.4,
-		"accel": 3.0,
+		"accel": 4.5,
 		"turn_rate": 1.2,
 		"fuel_capacity": 60.0,
-		"fuel_use": 0.4,
+		"fuel_use": 0.16,
 		"fuel_price": 2,
 		"work_offset": -2.8,     # negative: the header cuts this far AHEAD of the machine
 		"work_width": 3,         # tiles cut per pass
@@ -107,12 +107,12 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 28000,
 		"power_hp": 250,
-		"max_speed": 3.6,
+		"max_speed": 7.0,
 		"reverse_factor": 0.4,
-		"accel": 3.4,
+		"accel": 5.0,
 		"turn_rate": 1.0,
 		"fuel_capacity": 100.0,
-		"fuel_use": 0.6,
+		"fuel_use": 0.24,
 		"fuel_price": 2,
 		"work_offset": -3.5,
 		"work_width": 5,
@@ -130,12 +130,12 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 52000,
 		"power_hp": 400,
-		"max_speed": 3.9,
+		"max_speed": 7.5,
 		"reverse_factor": 0.4,
-		"accel": 3.6,
+		"accel": 5.2,
 		"turn_rate": 1.0,
 		"fuel_capacity": 140.0,
-		"fuel_use": 0.8,
+		"fuel_use": 0.32,
 		"fuel_price": 2,
 		"work_offset": -3.9,
 		"work_width": 5,

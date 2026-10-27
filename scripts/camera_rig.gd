@@ -23,7 +23,7 @@ var was_multi := false
 var allow_rotate := true   # false while driving: the camera follows the tractor
 
 func _ready() -> void:
-	cam.far = 200.0
+	cam.far = 900.0
 	add_child(cam)
 	_apply()
 

@@ -28,58 +28,98 @@ var buy_button: Button
 var go_button: Button
 var send_button: Button
 
-# The map canvas draws everything and reports taps.
+# The map canvas draws everything and reports taps. Drag to move the map, use the zoom buttons.
 class MapCanvas extends Control:
 	signal plot_tapped(id: String)
 	const PlotData := preload("res://scripts/plot_data.gd")
-	const X0 := -92.0
-	const X1 := 92.0
-	const Z0 := -28.0
-	const Z1 := 27.0
+	const X0 := -178.0
+	const X1 := 178.0
+	const Z0 := -148.0
+	const Z1 := 98.0
 	var state
 	var selected := ""
 	var active_id := ""
 	var now := 0.0
+	var zoom := 1.0
+	var pan := Vector2.ZERO
+	var press_pos := Vector2.ZERO
+	var pressed := false
+	var dragged := false
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		clip_contents = true
 
-	func _map_scale() -> float:
+	func _fit_scale() -> float:
 		return minf(size.x / (X1 - X0), size.y / (Z1 - Z0))
 
-	func _origin() -> Vector2:
-		var s := _map_scale()
-		return (size - Vector2((X1 - X0) * s, (Z1 - Z0) * s)) / 2.0
+	func _map_scale() -> float:
+		return _fit_scale() * zoom
+
+	func _centre() -> Vector2:
+		return Vector2((X0 + X1) / 2.0, (Z0 + Z1) / 2.0)
 
 	func _to_screen(x: float, z: float) -> Vector2:
-		return _origin() + Vector2((x - X0), (z - Z0)) * _map_scale()
+		return size / 2.0 + pan + (Vector2(x, z) - _centre()) * _map_scale()
 
 	func _to_world(p: Vector2) -> Vector2:
-		var w := (p - _origin()) / _map_scale()
-		return Vector2(w.x + X0, w.y + Z0)
+		return _centre() + (p - size / 2.0 - pan) / _map_scale()
 
 	func _rect_on_screen(r: Rect2) -> Rect2:
 		return Rect2(_to_screen(r.position.x, r.position.y), r.size * _map_scale())
 
+	func zoom_by(f: float) -> void:
+		var before := _to_world(size / 2.0)
+		zoom = clampf(zoom * f, 1.0, 8.0)
+		# keep the world point in the middle of the view where it was
+		pan = -(before - _centre()) * _map_scale()
+		queue_redraw()
+
+	func fit() -> void:
+		zoom = 1.0
+		pan = Vector2.ZERO
+		queue_redraw()
+
+	func focus_on(id: String) -> void:
+		var r := PlotData.rect_of(id)
+		zoom = clampf(minf(size.x / maxf(r.size.x, 1.0), size.y / maxf(r.size.y, 1.0)) * 0.6 / _fit_scale(), 1.0, 8.0)
+		var c := r.get_center()
+		pan = -(c - _centre()) * _map_scale()
+		queue_redraw()
+
 	func _gui_input(event: InputEvent) -> void:
-		var pos := Vector2.ZERO
-		var hit := false
 		var mb := event as InputEventMouseButton
-		var st := event as InputEventScreenTouch
-		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			pos = mb.position
-			hit = true
-		elif st != null and st.pressed:
-			pos = st.position
-			hit = true
-		if not hit:
-			return
+		var mm := event as InputEventMouseMotion
+		if mb != null and mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				pressed = true
+				dragged = false
+				press_pos = mb.position
+			else:
+				if pressed and not dragged:
+					_tap(mb.position)
+				pressed = false
+		elif mm != null and pressed:
+			if not dragged and mm.position.distance_to(press_pos) > 12.0:
+				dragged = true
+			if dragged:
+				pan += mm.relative
+				queue_redraw()
+
+	func _tap(pos: Vector2) -> void:
 		var w := _to_world(pos)
+		var slack := maxf(0.6, 10.0 / _map_scale())
+		var best := ""
+		var best_d := INF
 		for p in PlotData.PLOTS:
-			if PlotData.rect_of(str(p["id"])).grow(0.6).has_point(w):
-				plot_tapped.emit(str(p["id"]))
-				return
+			var r := PlotData.rect_of(str(p["id"])).grow(slack)
+			if r.has_point(w):
+				var d := (r.get_center() - w).length()
+				if d < best_d:
+					best_d = d
+					best = str(p["id"])
+		if best != "":
+			plot_tapped.emit(best)
 
 	func _tile_color(i: int) -> Color:
 		var t: Dictionary = state.tiles[i]
@@ -105,39 +145,52 @@ class MapCanvas extends Control:
 		var s := _map_scale()
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0.18, 0.3, 0.16))
 		draw_rect(_rect_on_screen(Rect2(X0, Z0, X1 - X0, Z1 - Z0)), Color(0.3, 0.46, 0.22))
-		# Road, yard and farmhouse
-		var road := Rect2(X0, PlotData.ROAD_Z - PlotData.ROAD_HALF, X1 - X0, PlotData.ROAD_HALF * 2.0)
-		draw_rect(_rect_on_screen(road), Color(0.28, 0.28, 0.3))
-		draw_rect(_rect_on_screen(Rect2(-17.0, 5.0, 34.0, 12.0)), Color(0.52, 0.42, 0.28))
+		# Roads (asphalt east-west, gravel north-south), yard and farmhouse
+		for r in PlotData.ROADS_V:
+			draw_rect(_rect_on_screen(Rect2(float(r[0]) - 2.0, float(r[1]), 4.0, float(r[2]) - float(r[1]))), Color(0.5, 0.45, 0.36))
+		for r in PlotData.ROADS_H:
+			draw_rect(_rect_on_screen(Rect2(float(r[1]), float(r[0]) - PlotData.ROAD_HALF, float(r[2]) - float(r[1]), PlotData.ROAD_HALF * 2.0)), Color(0.28, 0.28, 0.3))
+		draw_rect(_rect_on_screen(Rect2(-PlotData.YARD_HALF, 5.0, PlotData.YARD_HALF * 2.0, 14.0)), Color(0.52, 0.42, 0.28))
 		draw_rect(_rect_on_screen(Rect2(-2.6, 5.4, 5.2, 4.2)), Color(0.7, 0.3, 0.22))
-		_text(_to_screen(-4.0, 13.5), "Yard", 18, Color(1, 1, 1, 0.8))
-		_text(_to_screen(X0 + 1.0, PlotData.ROAD_Z + 0.5), "Main road", 16, Color(1, 1, 1, 0.85))
+		_text(_to_screen(-6.0, 15.5), "Farmyard", clampi(int(s * 7.0), 12, 22), Color(1, 1, 1, 0.85))
 		# Plots
 		for p in PlotData.PLOTS:
 			var id := str(p["id"])
 			var r := PlotData.rect_of(id)
 			var sr := _rect_on_screen(r)
 			var owned: bool = state.owns_plot(id)
+			var font_px := clampi(int(s * 7.0), 12, 20)
 			if owned:
-				draw_rect(sr, Color(0.25, 0.17, 0.1))
-				var start: int = state.plot_start(id)
-				var cols := int(p["cols"])
-				var rows := int(p["rows"])
-				var cell := PlotData.PITCH * s
-				for row in rows:
-					for col in cols:
-						var c := _tile_color(start + row * cols + col)
-						draw_rect(Rect2(sr.position + Vector2(col, row) * cell, Vector2(cell - 0.6, cell - 0.6)), c)
 				var st: Dictionary = state.plot_status(id, now)
-				var label := str(p["name"])
-				if bool(st["ready"]):
-					label += "  READY %d" % int(st["ripe"])
-				_text(sr.position + Vector2(5, 20), label, 18, Color(1, 1, 1) if not bool(st["ready"]) else Color(1.0, 0.9, 0.3))
+				var cell := PlotData.PITCH * s
+				if cell >= 3.5:
+					draw_rect(sr, Color(0.25, 0.17, 0.1))
+					var start: int = state.plot_start(id)
+					var cols := int(p["cols"])
+					var rows := int(p["rows"])
+					for row in rows:
+						for col in cols:
+							draw_rect(Rect2(sr.position + Vector2(col, row) * cell, Vector2(cell - 0.6, cell - 0.6)), _tile_color(start + row * cols + col))
+				else:
+					var col := Color(0.46, 0.37, 0.25)
+					if bool(st["ready"]):
+						col = Color(1.0, 0.84, 0.18)
+					elif int(st["growing"]) > 0:
+						col = Color(0.3, 0.64, 0.28)
+					elif int(st["ploughed"]) > 0:
+						col = Color(0.3, 0.2, 0.12)
+					draw_rect(sr, col)
+				if sr.size.x > 70.0:
+					var label := str(p["name"])
+					if bool(st["ready"]):
+						label += "  READY"
+					_text(sr.position + Vector2(5, font_px + 3), label, font_px, Color(1, 1, 1) if not bool(st["ready"]) else Color(0.12, 0.1, 0.0))
 			else:
 				draw_rect(sr, Color(0.42, 0.52, 0.34))
-				_text(sr.position + Vector2(5, 20), str(p["name"]), 18, Color(1, 1, 1))
-				_text(sr.position + Vector2(5, 42), "For sale  %d" % PlotData.price_of(id), 18, Color(1.0, 0.9, 0.5))
-			var edge := Color(1, 1, 1, 0.9) if id == selected else (Color(0.95, 0.85, 0.3) if not owned else Color(0.2, 0.2, 0.15))
+				if sr.size.x > 70.0:
+					_text(sr.position + Vector2(5, font_px + 3), str(p["name"]), font_px, Color(1, 1, 1))
+					_text(sr.position + Vector2(5, font_px * 2 + 6), "For sale  %d" % PlotData.price_of(id), font_px, Color(1.0, 0.9, 0.5))
+			var edge := Color(1, 1, 1, 0.95) if id == selected else (Color(0.95, 0.85, 0.3) if not owned else Color(0.2, 0.2, 0.15))
 			draw_rect(sr, edge, false, 4.0 if id == selected else 2.0)
 		# Machines
 		for mid in state.fleet:
@@ -180,6 +233,15 @@ func _init() -> void:
 	head.add_child(title)
 	money_label = _label("", FONT)
 	head.add_child(money_label)
+	var zoom_in := _button("Zoom +")
+	zoom_in.pressed.connect(func(): canvas.zoom_by(1.6))
+	head.add_child(zoom_in)
+	var zoom_out := _button("Zoom -")
+	zoom_out.pressed.connect(func(): canvas.zoom_by(1.0 / 1.6))
+	head.add_child(zoom_out)
+	var fit_btn := _button("Fit")
+	fit_btn.pressed.connect(func(): canvas.fit())
+	head.add_child(fit_btn)
 	var close_btn := _button("Close")
 	close_btn.pressed.connect(close)
 	head.add_child(close_btn)
@@ -267,15 +329,17 @@ func _update_info() -> void:
 	send_button.visible = false
 	if selected == "" or not PlotData.has_plot(selected):
 		title_label.text = "Tap a plot"
-		info_label.text = "Gold tiles are ripe and ready to harvest.\nGreen tiles are still growing.\nPlots with a price are for sale."
+		info_label.text = "Drag to move the map, Zoom + to see the crops.\nGold = ripe and ready to harvest.\nGreen = still growing.\nPlots with a price are for sale."
 		return
 	var p := PlotData.get_plot(selected)
+	var n := PlotData.tile_count(selected)
 	title_label.text = str(p["name"])
-	var size_text := "%s plot: %d x %d tiles (%d)" % [str(p["size"]), int(p["cols"]), int(p["rows"]), PlotData.tile_count(selected)]
+	var size_text := "%s plot, %s" % [str(p["size"]), PlotData.ha_text(n)]
 	if state.owns_plot(selected):
 		var st: Dictionary = state.plot_status(selected, Time.get_unix_time_from_system())
-		info_label.text = "%s\nRipe, ready to harvest: %d\nGrowing, not ready: %d\nPloughed, ready to plant: %d\nNot ploughed or stubble: %d" % [
-			size_text, int(st["ripe"]), int(st["growing"]), int(st["ploughed"]), int(st["empty"])]
+		info_label.text = "%s\nRipe, ready to harvest: %s\nGrowing, not ready: %s\nPloughed, ready to plant: %s\nNot ploughed: %s" % [
+			size_text, PlotData.ha_text(int(st["ripe"])), PlotData.ha_text(int(st["growing"])),
+			PlotData.ha_text(int(st["ploughed"])), PlotData.ha_text(int(st["empty"]))]
 		go_button.visible = true
 		send_button.visible = true
 		send_button.text = "Send %s here" % (machine_name if machine_name != "" else "machine")

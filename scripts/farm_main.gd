@@ -43,7 +43,9 @@ var shop                  # machinery shop screen (an overlay)
 var shop_button: Button
 var map_view              # farm map screen (an overlay)
 var map_button: Button
-var focus_plot := ""      # the plot the autopilot works; set by tapping a tile or on the map
+var focus_plot := ""      # the plot the autopilot works; set by tapping a plot or on the map
+var selected_plot := ""   # the plot that was tapped (owned or for sale)
+var refresh_pos := 0      # where the slow crop refresh continues
 var machines := {}       # vehicle id -> {"view", "ap", "cfg", "cfg_impl"}: every machine runs at once
 var vehicle_text_timer := 0.0
 var last_heading := 0.0
@@ -68,8 +70,8 @@ func _ready() -> void:
 	_sync_machines()
 
 	rig = CameraRigScript.new()
-	rig.position = Vector3(0, 0, -1)
-	rig.max_dist = 60.0
+	rig.position = Vector3(0, 0, -7)
+	rig.max_dist = 140.0
 	add_child(rig)
 
 	_apply_quality(int(settings["quality"]))
@@ -281,7 +283,7 @@ func _on_map_go(id: String) -> void:
 		_enter_manage()
 	var r := PlotData.rect_of(id)
 	rig.position = Vector3(r.get_center().x, 0.0, r.get_center().y)
-	rig.dist = clampf(maxf(r.size.x, r.size.y) * 1.2, 14.0, 58.0)
+	rig.dist = clampf(maxf(r.size.x, r.size.y) * 0.75, 14.0, 130.0)
 	rig.pitch = 0.9
 	rig.apply_view()
 	if state.owns_plot(id):
@@ -317,6 +319,48 @@ func _work_plot() -> String:
 	if here != "":
 		return here
 	return FarmLayout.nearest_plot(float(m["x"]), float(m["z"]), state.plots)
+
+# What the info box says about a plot: its size and what is on it, in percent (never in tiles).
+func _plot_text(id: String, now: float) -> String:
+	var p := PlotData.get_plot(id)
+	var n := PlotData.tile_count(id)
+	var head := "%s\n%s plot, %s\n" % [str(p["name"]), str(p["size"]), PlotData.ha_text(n)]
+	if not state.owns_plot(id):
+		return head + "For sale: %d\nOpen the Map to buy it" % PlotData.price_of(id)
+	var st: Dictionary = state.plot_status(id, now)
+	var lines: Array = []
+	if int(st["ripe"]) > 0:
+		lines.append("Ripe, ready to harvest: %s" % _pct(int(st["ripe"]), n))
+	if int(st["growing"]) > 0:
+		lines.append("%s growing: %s" % [_main_crop(id), _pct(int(st["growing"]), n)])
+	if int(st["ploughed"]) > 0:
+		lines.append("Ploughed, ready to plant: %s" % _pct(int(st["ploughed"]), n))
+	if int(st["empty"]) > 0:
+		lines.append("Not ploughed: %s" % _pct(int(st["empty"]), n))
+	return head + "\n".join(lines)
+
+func _pct(part: int, whole: int) -> String:
+	if whole <= 0 or part <= 0:
+		return "0%"
+	return "%d%%" % maxi(1, int(round(100.0 * float(part) / float(whole))))
+
+# The crop most of the growing tiles of a plot are.
+func _main_crop(id: String) -> String:
+	var counts := {}
+	var start: int = state.plot_start(id)
+	for i in range(start, start + PlotData.tile_count(id)):
+		if state.tiles[i]["state"] == "growing":
+			var c: String = state.tiles[i]["crop"]
+			counts[c] = int(counts.get(c, 0)) + 1
+	var best := ""
+	var best_n := 0
+	for c in counts:
+		if int(counts[c]) > best_n:
+			best_n = int(counts[c])
+			best = str(c)
+	if best == "" or not CropData.CROPS.has(best):
+		return "Crops"
+	return str(CropData.CROPS[best]["name"])
 
 # A machine was bought or put to use: refresh the machines, texts and the save.
 func _on_shop_changed() -> void:
@@ -361,10 +405,16 @@ func _process(delta: float) -> void:
 	if refresh_timer < 0.5:
 		return
 	refresh_timer = 0.0
-	for i in state.tiles.size():
-		if state.tiles[i]["state"] == "growing":
-			_refresh_tile(i)
-	if selected >= 0 and state.tiles[selected]["state"] == "growing":
+	# Growing crops change look slowly: refresh a slice of the tiles each time, round and round.
+	var n := state.tiles.size()
+	if n > 0:
+		var slice := mini(n, 600)
+		for k in slice:
+			var i := (refresh_pos + k) % n
+			if state.tiles[i]["state"] == "growing":
+				_refresh_tile(i)
+		refresh_pos = (refresh_pos + slice) % n
+	if selected_plot != "":
 		_update_ui()
 	_check_relief()
 
@@ -530,7 +580,7 @@ func _toggle_auto() -> void:
 	hud.set_auto_active(true)
 	var note := "Autopilot on: %s" % str(PlotData.get_plot(plot)["name"])
 	if width > 1:
-		note = "Autopilot on: %s, %d lanes, %d tiles wide" % [str(PlotData.get_plot(plot)["name"]), autopilot.lane_count, width]
+		note = "Autopilot on: %s, %d lanes, %.1f m wide" % [str(PlotData.get_plot(plot)["name"]), autopilot.lane_count, float(width) * PlotData.PITCH]
 	var need: float = autopilot.estimate_fuel(state.tractor, cfg)
 	if float(state.tractor["fuel"]) < need:
 		note = "Autopilot on - low fuel (need ~%d)" % int(ceil(need))
@@ -540,7 +590,7 @@ func _toggle_auto() -> void:
 		var n: int = state.count_work(kind, now)
 		var cost: int = CropData.CROPS[seed_crop]["seed_cost"]
 		if state.money < n * cost:
-			note = "Autopilot on - money covers %d of %d tiles" % [int(state.money / cost), n]
+			note = "Autopilot on - money covers %s of %s" % [PlotData.ha_text(int(state.money / cost)), PlotData.ha_text(n)]
 	hud.set_message(note, 4000)
 
 # Field rows other machines of the same kind are already working, so a second machine takes
@@ -572,25 +622,22 @@ func _auto_summary(kind: String, ap = null) -> String:
 	if kind == "travel":
 		return "Arrived at %s" % str(PlotData.get_plot(ap.plot_id)["name"]) if ap.finished else "%s" % ap.message
 	if ap.finished:
-		text = "Autopilot finished: %d tiles" % ap.job_worked
+		text = "Autopilot finished: %s" % PlotData.ha_text(ap.job_worked)
 	else:
-		text = "%s: %d tiles done" % [ap.message, ap.job_worked]
+		text = "%s: %s done" % [ap.message, PlotData.ha_text(ap.job_worked)]
 	var now := _now()
+	var st: Dictionary = state.plot_status(ap.plot_id, now)
 	if kind == "harvester":
-		var ripe: int = state.count_work(kind, now)
-		var unripe := _count_tiles("growing") - ripe
-		if ripe > 0:
-			text += ", %d ripe left" % ripe
-		if unripe > 0:
-			text += ", %d still growing" % unripe
+		if int(st["ripe"]) > 0:
+			text += ", %s ripe left" % PlotData.ha_text(int(st["ripe"]))
+		if int(st["growing"]) > 0:
+			text += ", %s still growing" % PlotData.ha_text(int(st["growing"]))
 	elif kind == "seeder":
-		var unplanted := _count_tiles("ploughed")
-		if unplanted > 0:
-			text += ", %d not planted" % unplanted
+		if int(st["ploughed"]) > 0:
+			text += ", %s not planted" % PlotData.ha_text(int(st["ploughed"]))
 	elif kind == "plough":
-		var raw: int = state.count_work(kind, now)
-		if raw > 0:
-			text += ", %d not ploughed" % raw
+		if int(st["empty"]) > 0:
+			text += ", %s not ploughed" % PlotData.ha_text(int(st["empty"]))
 	return text
 
 # Stops a machine's autopilot (the machine being driven when id is empty) and lifts its tool.
@@ -662,7 +709,7 @@ func _enter_manage() -> void:
 	hud.set_auto_active(false)
 	driving = false
 	rig.allow_rotate = true
-	rig.position = Vector3(0, 0, -1)
+	rig.position = Vector3(0, 0, -7)
 	rig.yaw = 0.5
 	rig.pitch = 0.9
 	rig.dist = 18.0
@@ -709,18 +756,24 @@ func _on_tapped(pos: Vector2) -> void:
 	if driving:
 		return
 	var hit = rig.ray_to_ground(pos)
-	var idx := -1
+	var pid := ""
 	if hit != null:
-		idx = grid.world_to_tile(hit)
-	var old := selected
-	selected = idx
-	if selected >= 0:
-		focus_plot = str(state.tiles[selected]["plot"])
-	if old >= 0:
-		_refresh_tile(old)
-	if selected >= 0:
-		_refresh_tile(selected)
+		pid = _plot_under(hit.x, hit.z)
+	selected_plot = pid
+	if pid != "" and state.owns_plot(pid):
+		focus_plot = pid
+	if pid != "":
+		grid.show_plot_frame(pid)
+	else:
+		grid.hide_plot_frame()
 	_update_ui()
+
+# The plot (owned or for sale) at a point on the ground, or "".
+func _plot_under(x: float, z: float) -> String:
+	for p in PlotData.PLOTS:
+		if PlotData.rect_of(str(p["id"])).grow(0.5).has_point(Vector2(x, z)):
+			return str(p["id"])
+	return ""
 
 func _handle_reset() -> void:
 	var t := Time.get_ticks_msec()
@@ -733,6 +786,7 @@ func _handle_reset() -> void:
 		state = GameStateScript.new()
 		grid.reset_plots()
 		focus_plot = ""
+		selected_plot = ""
 		selected = -1
 		_refresh_all_tiles()
 		_sync_machines()
@@ -839,30 +893,8 @@ func _update_ui() -> void:
 	var now := _now()
 	hud.set_status("Money: %d\n%s" % [state.money, state.inventory_text()])
 	var actions: Array = ["sell", "drive"]
-	var text := "Tap a tile"
-	if selected >= 0:
-		var t: Dictionary = state.tiles[selected]
-		var head := "%s: tile %d, %d\n" % [str(PlotData.get_plot(str(t["plot"]))["name"]), t["col"] + 1, t["row"] + 1]
-		match t["state"]:
-			"unploughed":
-				text = head + "Soil: unploughed"
-				actions.append("plough")
-			"stubble":
-				text = head + "Harvested - plough before replanting"
-				actions.append("plough")
-			"ploughed":
-				text = head + "Soil: ploughed\nReady to plant"
-				text += _fertilized_note(t)
-				for id in CropData.CROPS:
-					actions.append("plant_" + id)
-			"growing":
-				var c: Dictionary = CropData.CROPS[t["crop"]]
-				var p: float = state.progress(selected, now)
-				if p >= 1.0:
-					text = head + "%s: ripe!" % c["name"]
-					actions.append("harvest")
-				else:
-					text = head + "%s: growing %d%%" % [c["name"], int(p * 100.0)]
-					text += _fertilized_note(t)
+	var text := "Tap a plot"
+	if selected_plot != "":
+		text = _plot_text(selected_plot, now)
 	hud.set_tile_text(text)
 	hud.show_actions(actions)

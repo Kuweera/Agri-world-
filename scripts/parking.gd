@@ -13,7 +13,7 @@ const YARD_X := 17.0
 const YARD_Z0 := 4.8
 const YARD_Z1 := 17.0
 # The ploughed field, with a little room round it (x, z, width, depth).
-const FIELD_RECT := Rect2(-6.8, -10.8, 13.6, 13.4)
+const FIELD_RECT := Rect2(-6.8, -16.2, 13.6, 13.4)
 const GAP := 0.15      # clear space kept between parked machines
 
 # A free pose in the yard for a new machine, as close to the house as it fits and facing the

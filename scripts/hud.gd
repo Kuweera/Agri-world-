@@ -77,7 +77,7 @@ func _ready() -> void:
 	tile_panel.position = Vector2(20, vp.y - 140)
 	add_child(tile_panel)
 	tile_label.add_theme_font_size_override("font_size", 28)
-	tile_label.text = "Tap a tile"
+	tile_label.text = "Tap a plot"
 	tile_panel.add_child(tile_label)
 
 	action_box.mouse_filter = Control.MOUSE_FILTER_IGNORE

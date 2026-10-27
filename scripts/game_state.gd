@@ -13,7 +13,10 @@ const Parking := preload("res://scripts/parking.gd")
 const COLS := 8
 const ROWS := 8
 const START_MONEY := 500
-const SCHEMA_VERSION := 5
+const SCHEMA_VERSION := 6
+# Build A of the plots (save version 5) used other plot ids. Those plots are taken back and what
+# they cost is refunded, because the farm layout changed.
+const OLD_PLOT_PRICES := {"e1": 4200, "w1": 3500, "e2": 6700, "w2": 6850, "e3": 11200, "w3": 13450, "s1": 2800, "s2": 6700, "s3": 4200}
 const RELIEF_AMOUNT := 100
 const STATES := ["unploughed", "ploughed", "growing", "stubble"]
 # After a harvest the land is left as stubble and must be ploughed again before replanting.
@@ -619,6 +622,18 @@ func migrate(data: Dictionary) -> Dictionary:
 	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 4:
 		d["plots"] = ["farm"]
 		d["schema_version"] = 5
+	if _is_num(d.get("schema_version")) and int(d["schema_version"]) == 5:
+		var refund := 0
+		var old_plots = d.get("plots", ["farm"])
+		if typeof(old_plots) == TYPE_ARRAY:
+			for pid in old_plots:
+				refund += int(OLD_PLOT_PRICES.get(str(pid), 0))
+		if typeof(d.get("tiles")) == TYPE_ARRAY and d["tiles"].size() > COLS * ROWS:
+			d["tiles"] = d["tiles"].slice(0, COLS * ROWS)
+		d["plots"] = ["farm"]
+		if _is_num(d.get("money")):
+			d["money"] = int(d["money"]) + refund
+		d["schema_version"] = 6
 	return d
 
 func _is_num(v: Variant) -> bool:
