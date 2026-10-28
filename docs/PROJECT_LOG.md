@@ -216,3 +216,9 @@
 - Machines: speeds about 2x, fuel use about 40% of before.
 - Map: zoom and drag. Save format 6: build A plots (old ids) are taken back and refunded.
 - Home field moved to z = -9.4 (7 units from the road).
+
+## Performance: crop detail by distance
+- Close-up of a big planted plot ran at 8-10 FPS (many overlapping leaf cards). Now each crop batch has
+  detail layers by distance from the camera (farm_grid._lod_layers): dense plants only near, a few big
+  plants far away; Low quality has no dense layer. Crop cards use per-vertex lighting (cheaper).
+- Crop atlas shrunk to 1536 x 1152 (384 px cells). CropModels.build detail: 2 dense, 1 medium, 0 sparse.
