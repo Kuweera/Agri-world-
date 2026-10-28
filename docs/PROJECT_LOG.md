@@ -222,3 +222,6 @@
   detail layers by distance from the camera (farm_grid._lod_layers): dense plants only near, a few big
   plants far away; Low quality has no dense layer. Crop cards use per-vertex lighting (cheaper).
 - Crop atlas shrunk to 1536 x 1152 (384 px cells). CropModels.build detail: 2 dense, 1 medium, 0 sparse.
+- Soil also has distance levels now (farm_grid._ground_layers): full ridges near, 10-triangle stripes
+  medium, one flat square far (coloured by the crop on it). Crop detail is 0..3 (0 = one card per plant).
+  Reason: ~1900 owned tiles x 110 triangles was ~200k triangles in view (FPS 7-15).
