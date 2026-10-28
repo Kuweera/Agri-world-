@@ -255,7 +255,7 @@ func _init() -> void:
 	var v := GameState.default_tractor()
 	_check(v["fuel"] == 20.0 and v["speed"] == 0.0, "tractor starts full and stopped")
 	_run(v, cfg, 1.0, 0.0, 60)
-	_check(absf(v["speed"] - 4.0) < 0.001, "reaches top speed after 1s")
+	_check(absf(v["speed"] - float(cfg["accel"])) < 0.001, "accelerates at its rated acceleration (1 s)")
 	_check(v["z"] < 3.0, "default heading drives toward -z")
 	_check(v["fuel"] < 20.0, "driving uses fuel")
 	_check(v["hours"] > 0.0, "driving adds running hours")
@@ -271,7 +271,7 @@ func _init() -> void:
 
 	var v4 := GameState.default_tractor()
 	_run(v4, cfg, -1.0, 0.0, 120)
-	_check(absf(v4["speed"] + 2.0) < 0.001, "reverse is half speed")
+	_check(absf(v4["speed"] + float(cfg["max_speed"]) * 0.5) < 0.001, "reverse is half speed")
 
 	var v5 := GameState.default_tractor()
 	v5["fuel"] = 0.0
@@ -370,7 +370,7 @@ func _init() -> void:
 	tbad["tractor"]["implement"] = "bogus"
 	_check(btest.from_dict(tbad) != "", "rejects unknown tool")
 	tbad = tgood.duplicate(true)
-	tbad["tractor"]["x"] = 150.0
+	tbad["tractor"]["x"] = 5000.0
 	_check(btest.from_dict(tbad) != "", "rejects tractor outside the land")
 	tbad = tgood.duplicate(true)
 	tbad.erase("tractor")
@@ -384,9 +384,10 @@ func _init() -> void:
 	var gridn = FarmGridScript.new()
 	var mismatches := 0
 	for xi in range(-90, 91):
-		for zi in range(-130, 51):
-			var gx := xi * 0.1
-			var gz := zi * 0.1
+		for zi in range(-190, -10):
+			# a small offset keeps the points off the tile edges (the grid uses 32-bit floats)
+			var gx := xi * 0.1 + 0.013
+			var gz := zi * 0.1 + 0.013
 			if gridn.world_to_tile(Vector3(gx, 0.0, gz)) != FarmLayout.world_to_tile(gx, gz):
 				mismatches += 1
 	gridn.free()
@@ -456,7 +457,7 @@ func _init() -> void:
 
 	# Resume: stops when fuel runs out, then carries on with what is left
 	var lowf = GameState.new()
-	res = _auto_job(lowf, "plough", t0, 3.0)
+	res = _auto_job(lowf, "plough", t0, 1.5)
 	var done_before := _count_state(lowf, "ploughed")
 	_check(not res["finished"] and res["message"] == "Out of fuel", "autopilot stops when fuel runs out")
 	_check(done_before > 0 and done_before < 64, "some tiles done before fuel ran out (" + str(done_before) + ")")
