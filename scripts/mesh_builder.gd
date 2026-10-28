@@ -60,6 +60,9 @@ static func card_material(path: String) -> StandardMaterial3D:
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	m.alpha_scissor_threshold = 0.5
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # cards are seen from both sides
+	# Light the cards per vertex, not per pixel: a card has only 4 vertices, and the per-pixel work
+	# is what is slow when many cards overlap on a weak graphics chip.
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 	return m
 
 # UV rectangle of atlas cell i (4 x 4 grid, index = row * 4 + col), inset a little.

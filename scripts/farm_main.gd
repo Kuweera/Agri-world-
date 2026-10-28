@@ -143,7 +143,7 @@ func _ready() -> void:
 # Medium/High: procedural sky, real sun shadows, full crop detail.
 func _apply_quality(q: int) -> void:
 	env_setup.apply_quality(q)
-	grid.set_detail(0 if q == 0 else 1)
+	grid.set_quality(q)
 	grid.set_blob_shadows(q == 0)
 	for id in machines:
 		machines[id]["view"].set_blob_visible(q == 0)
