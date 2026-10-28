@@ -406,11 +406,11 @@ func _process(delta: float) -> void:
 		return
 	refresh_timer = 0.0
 	# Growing crops change look slowly: refresh a slice of the tiles each time, round and round.
-	var n := state.tiles.size()
+	var n: int = state.tiles.size()
 	if n > 0:
-		var slice := mini(n, 600)
+		var slice: int = mini(n, 600)
 		for k in slice:
-			var i := (refresh_pos + k) % n
+			var i: int = (refresh_pos + k) % n
 			if state.tiles[i]["state"] == "growing":
 				_refresh_tile(i)
 		refresh_pos = (refresh_pos + slice) % n
