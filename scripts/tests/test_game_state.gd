@@ -664,7 +664,7 @@ func _init() -> void:
 		_check(cat_vinc, "%s: pricier means more power" % cat_vt)
 	_check(VehicleData.VEHICLES.has(VehicleData.DEFAULT_VEHICLE), "default vehicle exists")
 	var cat_dt: Dictionary = VehicleData.get_vehicle("tractor")
-	var cat_same: bool = float(cat_dt["max_speed"]) == 4.0 and float(cat_dt["fuel_capacity"]) == 20.0
+	var cat_same: bool = float(cat_dt["max_speed"]) == 9.0 and float(cat_dt["fuel_capacity"]) == 20.0
 	cat_same = cat_same and float(cat_dt["work_offset"]) == 1.8
 	_check(cat_same, "default tractor numbers unchanged")
 	_check(VehicleData.get_vehicle("nope").is_empty(), "unknown vehicle gives empty entry")
@@ -724,7 +724,7 @@ func _init() -> void:
 	var dr_px := 0.0
 	var dr_pz := 0.0
 	for dr_gx in range(-40, 41):
-		for dr_gz in range(-40, 41):
+		for dr_gz in range(-90, -9):
 			if dr_tile < 0 and FarmLayout.world_to_tile(dr_gx * 0.25, dr_gz * 0.25) == 0:
 				dr_tile = 0
 				dr_px = dr_gx * 0.25
@@ -744,7 +744,7 @@ func _init() -> void:
 	var fw_sum := {}
 	var fw_cnt := {}
 	for fw_gx in range(-48, 49):
-		for fw_gz in range(-48, 49):
+		for fw_gz in range(-72, 1):
 			var fw_i: int = FarmLayout.world_to_tile(fw_gx * 0.25, fw_gz * 0.25)
 			if fw_i >= 0:
 				fw_sum[fw_i] = fw_sum.get(fw_i, Vector2.ZERO) + Vector2(fw_gx * 0.25, fw_gz * 0.25)
