@@ -91,3 +91,46 @@ static func _stubble(mb, variant: int) -> void:
 		var dir := Vector3(cos(a), 0.0, sin(a))
 		mb.add_ribbon([start, start + dir * 0.18, start + dir * 0.36], [0.03, 0.035, 0.01],
 			Vector3.UP.cross(dir).normalized(), Color(0.7, 0.6, 0.3), Color(0.85, 0.75, 0.42))
+
+# ---- Cheaper versions for tiles far from the camera ----
+
+# Level 1: five flat stripes (ridge and furrow colours), 10 triangles. No skirt, clods or tufts.
+static func build_lite(kind: String, tint: Color = Color(0, 0, 0, 0)) -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var a := Color(0.4, 0.27, 0.14)
+	var b := Color(0.22, 0.13, 0.07)
+	if kind == "unploughed":
+		a = Color(0.44, 0.47, 0.22)
+		b = Color(0.4, 0.42, 0.2)
+	elif kind == "stubble":
+		a = Color(0.52, 0.4, 0.23)
+		b = Color(0.45, 0.35, 0.2)
+	if tint.a > 0.0:
+		# a growing crop: green or gold rows over dark furrows, so a planted field never looks bare
+		a = tint.lightened(0.1)
+		b = tint.lerp(Color(0.14, 0.1, 0.05), 0.5)
+	for k in 5:
+		var z0 := -HALF + 0.3 * float(k)
+		var c := a if k % 2 == 0 else b
+		mb.add_flat_quad(Vector3(-HALF, BASE_Y + 0.05, z0), Vector3(HALF, BASE_Y + 0.05, z0),
+			Vector3(HALF, BASE_Y + 0.05, z0 + 0.3), Vector3(-HALF, BASE_Y + 0.05, z0 + 0.3), c)
+	return mb.build()
+
+# Level 2: one flat square of a single colour, 2 triangles.
+static func build_flat(color: Color) -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	var y := BASE_Y + 0.05
+	mb.add_flat_quad(Vector3(-HALF, y, -HALF), Vector3(HALF, y, -HALF), Vector3(HALF, y, HALF), Vector3(-HALF, y, HALF), color)
+	return mb.build()
+
+# The colour of a far-away tile: soil, or the colour of the crop growing on it.
+static func far_color(kind: String, crop_id: String, stage: int) -> Color:
+	if crop_id != "":
+		var stages := [Color(0.3, 0.22, 0.12), Color(0.31, 0.36, 0.16), Color(0.28, 0.46, 0.17),
+			Color(0.36, 0.48, 0.17), Color(0.74, 0.64, 0.22)]
+		return stages[clampi(stage, 0, stages.size() - 1)]
+	if kind == "ploughed":
+		return Color(0.3, 0.19, 0.1)
+	if kind == "stubble":
+		return Color(0.5, 0.4, 0.24)
+	return Color(0.42, 0.45, 0.22)

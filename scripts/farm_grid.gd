@@ -145,14 +145,22 @@ func reset_plots() -> void:
 # only very close (or never) because overlapping leaf cards cost a lot on weak graphics chips.
 func _lod_layers() -> Array:
 	if quality <= 0:
-		return [{"detail": 1, "begin": 0.0, "end": 22.0}, {"detail": 0, "begin": 17.0, "end": 70.0}]
+		return [{"detail": 1, "begin": 0.0, "end": 10.0}, {"detail": 0, "begin": 8.0, "end": 40.0}]
 	if quality == 1:
-		return [{"detail": 2, "begin": 0.0, "end": 16.0}, {"detail": 1, "begin": 12.0, "end": 40.0}, {"detail": 0, "begin": 34.0, "end": 90.0}]
-	return [{"detail": 2, "begin": 0.0, "end": 26.0}, {"detail": 1, "begin": 20.0, "end": 56.0}, {"detail": 0, "begin": 48.0, "end": 120.0}]
+		return [{"detail": 2, "begin": 0.0, "end": 11.0}, {"detail": 1, "begin": 9.0, "end": 26.0}, {"detail": 0, "begin": 22.0, "end": 60.0}]
+	return [{"detail": 3, "begin": 0.0, "end": 14.0}, {"detail": 2, "begin": 11.0, "end": 30.0},
+		{"detail": 1, "begin": 26.0, "end": 50.0}, {"detail": 0, "begin": 46.0, "end": 90.0}]
+
+# Soil detail by distance: full ridges and clods close up, stripes further out, one flat square far away.
+# (A ploughed tile has about 110 triangles, so thousands of tiles in view are too much for a weak phone.)
+func _ground_layers() -> Array:
+	var near: float = [12.0, 16.0, 22.0][clampi(quality, 0, 2)]
+	var far_start: float = [38.0, 46.0, 60.0][clampi(quality, 0, 2)]
+	return [{"begin": 0.0, "end": near}, {"begin": near - 3.0, "end": far_start + 3.0}, {"begin": far_start, "end": GROUND_RANGE}]
 
 # Adds tile i to the batch `key` of a chunk's group ("ground" or "crops"), creating the batch (one
 # MultiMeshInstance3D per layer) when needed. meshes/begins/ends have one entry per layer.
-func _batch_add(ch: Dictionary, group: String, key: String, meshes: Array, mat: Material, begins: Array, ends: Array,
+func _batch_add(ch: Dictionary, group: String, key: String, meshes: Array, mats: Array, begins: Array, ends: Array,
 		i: int, slots: Array, y: float) -> void:
 	var dict: Dictionary = ch[group]
 	var b: Dictionary
@@ -170,7 +178,7 @@ func _batch_add(ch: Dictionary, group: String, key: String, meshes: Array, mat: 
 			mm.visible_instance_count = 0
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
-			mmi.material_override = mat
+			mmi.material_override = mats[k]
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mmi.position = ch["center"]
 			mmi.custom_aabb = AABB(Vector3(-half, -0.5, -half), Vector3(half * 2.0, 4.0, half * 2.0))
@@ -213,15 +221,24 @@ func _free_batches(ch: Dictionary, group: String) -> void:
 			(mmi as Node).queue_free()
 	ch[group] = {}
 
-func _set_ground(i: int, kind: String, variant: int) -> void:
+func _set_ground(i: int, kind: String, variant: int, crop_id: String = "", stage: int = 0) -> void:
 	var key := "%s:%d" % [kind, variant]
+	if crop_id != "":
+		key = "g:%s:%d:%d" % [crop_id, stage, variant]
 	if tile_gkey[i] == key:
 		return
 	var ch: Dictionary = tile_chunk[i]
 	if tile_gkey[i] != "":
 		_batch_remove(ch, "ground", tile_gkey[i], i, tile_gslot, 0.0)
 	tile_gkey[i] = key
-	_batch_add(ch, "ground", key, [_tile_mesh(kind, variant)], mat_ground, [0.0], [GROUND_RANGE], i, tile_gslot, 0.0)
+	var meshes := [_tile_mesh(kind, variant), _lite_mesh(kind, crop_id, stage), _flat_mesh(kind, crop_id, stage)]
+	var mats := [mat_ground, mat_ground, mat_vc]
+	var begins: Array = []
+	var ends: Array = []
+	for layer in _ground_layers():
+		begins.append(float(layer["begin"]))
+		ends.append(float(layer["end"]))
+	_batch_add(ch, "ground", key, meshes, mats, begins, ends, i, tile_gslot, 0.0)
 
 func _set_crop(i: int, key: String, crop_id: String, stage: int, variant: int) -> void:
 	if tile_ckey[i] == key:
@@ -238,7 +255,25 @@ func _set_crop(i: int, key: String, crop_id: String, stage: int, variant: int) -
 			meshes.append(_crop_mesh(crop_id, stage, variant, int(layer["detail"])))
 			begins.append(float(layer["begin"]))
 			ends.append(float(layer["end"]))
-		_batch_add(ch, "crops", key, meshes, mat_crop, begins, ends, i, tile_cslot, TileModels.BASE_Y)
+		var mats: Array = []
+		for k in meshes.size():
+			mats.append(mat_crop)
+		_batch_add(ch, "crops", key, meshes, mats, begins, ends, i, tile_cslot, TileModels.BASE_Y)
+
+func _lite_mesh(kind: String, crop_id: String = "", stage: int = 0) -> ArrayMesh:
+	var key := "l:%s:%s:%d" % [kind, crop_id, stage]
+	if not mesh_cache.has(key):
+		var tint := Color(0, 0, 0, 0)
+		if crop_id != "":
+			tint = TileModels.far_color(kind, crop_id, stage)
+		mesh_cache[key] = TileModels.build_lite(kind, tint)
+	return mesh_cache[key]
+
+func _flat_mesh(kind: String, crop_id: String, stage: int) -> ArrayMesh:
+	var key := "f:%s:%s:%d" % [kind, crop_id, stage]
+	if not mesh_cache.has(key):
+		mesh_cache[key] = TileModels.build_flat(TileModels.far_color(kind, crop_id, stage))
+	return mesh_cache[key]
 
 func _tile_mesh(kind: String, variant: int) -> ArrayMesh:
 	var key := "t:%s:%d" % [kind, variant]
@@ -267,9 +302,12 @@ func set_quality(q: int) -> void:
 	quality = q
 	for ch in chunks:
 		_free_batches(ch, "crops")
+		_free_batches(ch, "ground")
 	for i in tile_ckey.size():
 		tile_ckey[i] = ""
 		tile_cslot[i] = -1
+		tile_gkey[i] = ""
+		tile_gslot[i] = -1
 	_prebuild_crops()
 
 func set_blob_shadows(on: bool) -> void:
@@ -282,16 +320,17 @@ func world_to_tile(p: Vector3) -> int:
 
 func refresh_tile(i: int, tile: Dictionary, progress: float, _is_selected: bool = false) -> void:
 	var st: String = tile["state"]
-	var kind := "ploughed"
-	if st == "unploughed" or st == "stubble":
-		kind = st
-	_set_ground(i, kind, _variant(i, 3))
 	if st == "growing":
 		var crop_id: String = tile["crop"]
 		var stage := CropModels.stage_for(progress)
 		var cv := _variant(i, 2)
+		_set_ground(i, "ploughed", _variant(i, 3), crop_id, stage)
 		_set_crop(i, "%s:%d:%d" % [crop_id, stage, cv], crop_id, stage, cv)
 	else:
+		var kind := "ploughed"
+		if st == "unploughed" or st == "stubble":
+			kind = st
+		_set_ground(i, kind, _variant(i, 3))
 		_set_crop(i, "", "", 0, 0)
 
 # ---- Selected plot outline ----

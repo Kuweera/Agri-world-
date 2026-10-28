@@ -4,7 +4,7 @@ extends RefCounted
 # crop_atlas.gd holds each picture's UV rectangle and width/height ratio.
 # Plants stand in straight rows on the soil ridges.
 # Five growth stages: 0 sprout, 1 young, 2 growing, 3 maturing/flowering, 4 ripe.
-# detail: 2 = dense (close to the camera), 1 = medium, 0 = a few big plants (far away). The game draws
+# detail: 3 = dense (close to the camera), 2 = medium, 1 = sparse, 0 = a few big one-card plants (far away). The game draws
 # each tile with the level that suits its distance (farm_grid.gd), because overlapping leaf cards
 # are what is slow on a weak graphics chip.
 
@@ -42,17 +42,17 @@ static func _spots(crop_id: String, detail: int) -> Array:
 	var rows: Array = [0, 2, 4]
 	var xs: Array = [-0.36, 0.36]
 	if crop_id == "maize":
-		if detail >= 2:
+		if detail >= 3:
 			xs = [-0.5, 0.0, 0.5]
-		elif detail == 1:
+		elif detail == 2:
 			xs = [-0.375, 0.375]
 		else:
 			xs = [0.0]
 	elif crop_id == "beans":
-		if detail >= 2:
+		if detail >= 3:
 			rows = [0, 1, 2, 3, 4]
 			xs = [-0.5, 0.0, 0.5]
-		elif detail == 1:
+		elif detail == 2:
 			xs = [-0.5, 0.0, 0.5]
 		else:
 			xs = [0.0]
@@ -64,7 +64,7 @@ static func _spots(crop_id: String, detail: int) -> Array:
 			out.append(Vector2(float(x), -0.6 + 0.3 * float(r)))
 	return out
 
-static func build(crop_id: String, stage: int, variant: int = 0, detail: int = 2) -> ArrayMesh:
+static func build(crop_id: String, stage: int, variant: int = 0, detail: int = 3) -> ArrayMesh:
 	var mb := MeshBuilder.new()
 	var spots := _spots(crop_id, detail)
 	stage = clampi(stage, 0, STAGE_COUNT - 1)
@@ -88,11 +88,11 @@ static func _plant(mb, is_maize: bool, base: Vector3, stage: int, sd: int, detai
 	var height: float = float(MAIZE_HEIGHT[stage]) if is_maize else float(BEAN_HEIGHT[stage])
 	height *= 0.9 + 0.2 * _h(sd + 3)
 	# Fewer plants are made bigger, so the field still looks full from a distance.
-	height *= 1.0 + 0.15 * float(2 - clampi(detail, 0, 2))
+	height *= [1.45, 1.25, 1.1, 1.0][clampi(detail, 0, 3)]
 	var width: float = height * float(CropAtlas.ASPECT[cell])
 	var rect: Rect2 = CropAtlas.RECTS[cell]
 	var yaw := _h(sd + 7) * PI
-	var cards := 2
+	var cards := 1 if detail == 0 else 2
 	var shade := 0.92 + 0.1 * _h(sd + 9)
 	var c0 := Color(0.72 * shade, 0.74 * shade, 0.72 * shade)   # a little darker where it meets the soil
 	var c1 := Color(shade, shade, shade)
