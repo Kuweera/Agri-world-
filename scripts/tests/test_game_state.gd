@@ -1321,7 +1321,7 @@ func _init() -> void:
 			_check(tb.size.is_finite() and tb.size.x < 1.6 and tb.size.z < 1.6 and tb.size.y < 0.4, "tile %s v%d stays inside its cell" % [kind, tv])
 	for cid in ["maize", "beans", "other"]:
 		for stg in CropModels.STAGE_COUNT:
-			for det in 2:
+			for det in 3:
 				var cm: ArrayMesh = CropModels.build(cid, stg, 0, det)
 				var carr = cm.surface_get_arrays(0)
 				var nv: int = carr[Mesh.ARRAY_VERTEX].size()
