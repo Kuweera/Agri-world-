@@ -24,6 +24,50 @@ const PARKED_RESISTANCE := 1.6
 const PUSH_STEP_MAX := 0.25
 const PUSH_DRAG_RATE := 1.5   # extra slowing per second while pushing (the push itself already slows the pair)
 
+# Drivetrain. Units: 1 game unit is treated as 1 metre for forces, so G = 9.8 u/s^2.
+# Acceleration is limited by grip at low speed and by engine power at high speed:
+#   a = min(TRACTION_MU * G, power / (mass * speed)).  Heavier or weaker machines accelerate slower.
+# Pressing the opposite direction while moving brakes (BRAKE_MU * G, less when an implement adds mass),
+# then reverses. Letting go of the throttle only coasts (rolling resistance and engine braking).
+# Steering is a bicycle model: yaw rate = speed * tan(steer angle) / wheelbase. The steer angle follows
+# the input at STEER_RATE, its limit shrinks with speed, and sideways acceleration is limited to LAT_MU * G
+# (the machine understeers instead of turning tighter than the grip allows).
+const G := 9.8
+const DRIVE_EFF := 0.75
+const TRACTION_MU := 0.55
+const V_MIN := 0.5
+const BRAKE_MU := 0.5
+const COAST_DECEL := 3.5
+const STEER_RATE := 1.4
+const STEER_SPEED_LOSS := 0.5
+const LAT_MU := 0.7
+const DEFAULT_MASS := 5000.0
+const DEFAULT_STEER_DEG := 35.0
+
+# Engine power in watts at the wheels.
+static func power_w(cfg: Dictionary) -> float:
+	return float(cfg["power_hp"]) * 745.7 * DRIVE_EFF
+
+static func total_mass(cfg: Dictionary) -> float:
+	return float(cfg.get("mass_total", cfg.get("mass_kg", DEFAULT_MASS)))
+
+# Forward acceleration the drivetrain can give at this speed (u/s^2).
+static func drive_accel(cfg: Dictionary, speed: float) -> float:
+	return minf(TRACTION_MU * G, power_w(cfg) / (total_mass(cfg) * maxf(absf(speed), V_MIN)))
+
+# Braking deceleration (u/s^2). The tractor's own brakes; a heavy implement lengthens the stop.
+static func brake_decel(cfg: Dictionary) -> float:
+	var own := float(cfg.get("mass_kg", DEFAULT_MASS))
+	return BRAKE_MU * G * own / maxf(own, total_mass(cfg))
+
+static func wheelbase_of(cfg: Dictionary) -> float:
+	return float(cfg.get("wheelbase", float(cfg.get("hit_len", 2.3)) * 0.6))
+
+# Steering limit in radians at this speed.
+static func steer_limit(cfg: Dictionary, speed: float) -> float:
+	var f := clampf(absf(speed) / float(cfg["max_speed"]), 0.0, 1.0)
+	return deg_to_rad(float(cfg.get("max_steer_deg", DEFAULT_STEER_DEG))) * (1.0 - STEER_SPEED_LOSS * f)
+
 # How hard the engine works: horsepower needed divided by horsepower available.
 static func load_ratio(cfg: Dictionary, implement_id: String) -> float:
 	return ImplementData.weight_of(implement_id) * HP_PER_KG / maxf(1.0, float(cfg["power_hp"]))
@@ -39,7 +83,8 @@ static func loaded_config(cfg: Dictionary, implement_id: String) -> Dictionary:
 	var f := speed_factor(ratio)
 	var over := clampf(ratio - FULL_SPEED_LOAD, 0.0, 1.0)
 	out["max_speed"] = float(cfg["max_speed"]) * f
-	out["accel"] = float(cfg["accel"]) * maxf(f, MIN_ACCEL_FACTOR)
+	out["accel"] = float(cfg["accel"]) * maxf(f, MIN_ACCEL_FACTOR)   # no longer used by step()
+	out["mass_total"] = float(cfg.get("mass_kg", DEFAULT_MASS)) + ImplementData.weight_of(implement_id)
 	out["fuel_use"] = float(cfg["fuel_use"]) * (1.0 + FUEL_LOAD_BONUS * over)
 	out["load_ratio"] = ratio
 	out["speed_factor"] = f
@@ -50,22 +95,35 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 		others: Array = []) -> void:
 	var max_speed: float = cfg["max_speed"]
 
-	# No fuel means no power: the vehicle coasts to a stop.
-	var target := 0.0
-	if v["fuel"] > 0.0:
-		if throttle >= 0.0:
-			target = throttle * max_speed
+	# Longitudinal: grip- and power-limited drive, separate brake, coasting without throttle.
+	var speed0: float = v["speed"]
+	var powered: bool = v["fuel"] > 0.0
+	var sp := speed0
+	if throttle != 0.0 and absf(speed0) > 0.1 and signf(throttle) != signf(speed0):
+		# The other direction is pressed while still rolling: brake first, then reverse.
+		sp = move_toward(speed0, 0.0, brake_decel(cfg) * delta)
+		v["_braking"] = true
+	else:
+		v["_braking"] = false
+		var target := 0.0
+		if powered and throttle != 0.0:
+			target = throttle * max_speed * (1.0 if throttle > 0.0 else float(cfg["reverse_factor"]))
+		if absf(target) > absf(sp) and (sp == 0.0 or signf(target) == signf(sp)):
+			sp = move_toward(sp, target, drive_accel(cfg, sp) * delta)
 		else:
-			target = throttle * max_speed * float(cfg["reverse_factor"])
-	v["speed"] = move_toward(float(v["speed"]), target, float(cfg["accel"]) * delta)
+			sp = move_toward(sp, target, COAST_DECEL * delta)
+	v["speed"] = sp
 
-	# Steering only works while moving, and flips when reversing.
-	var old_heading: float = v["heading"]
+	# Steering: the wheel angle follows the input, the limit shrinks with speed.
 	var speed: float = v["speed"]
-	var turn_scale := clampf(absf(speed) / max_speed * 2.0, 0.0, 1.0)
-	v["heading"] = fposmod(
-		float(v["heading"]) - steer * float(cfg["turn_rate"]) * turn_scale * signf(speed) * delta,
-		TAU)
+	var want_angle := clampf(steer, -1.0, 1.0) * steer_limit(cfg, speed)
+	var angle := move_toward(float(v.get("_steer", 0.0)), want_angle, STEER_RATE * delta)
+	v["_steer"] = angle
+	var yaw := speed * tan(angle) / maxf(0.5, wheelbase_of(cfg))
+	var yaw_cap := LAT_MU * G / maxf(absf(speed), 0.1)
+	v["_understeer"] = absf(yaw) > yaw_cap
+	yaw = clampf(yaw, -yaw_cap, yaw_cap)
+	v["heading"] = fposmod(float(v["heading"]) - yaw * delta, TAU)
 
 	# Move, stay inside the bounds, and stop at solid obstacles.
 	var old_x: float = v["x"]

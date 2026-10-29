@@ -323,8 +323,11 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 		for w in wheels:
 			w["angle"] = fposmod(float(w["angle"]) + sp * dt / float(w["radius"]), TAU)
 			w["node"].rotation.x = float(w["sign"]) * float(w["angle"])
-		# Real front wheels turn into the bend (looks only).
+		# Real front wheels follow the steering angle of the drivetrain model (looks only). A machine
+		# without one yet (shop preview) falls back to the turn rate.
 		var want := clampf(yaw_vis * 0.35 * (1.0 if sp >= 0.0 else -1.0), -0.5, 0.5)
+		if v.has("_steer"):
+			want = clampf(-float(v["_steer"]), -0.6, 0.6)
 		steer_vis = lerpf(steer_vis, want, minf(1.0, dt * 8.0))
 		for p in steer_pivots:
 			p.rotation.y = -steer_vis if rear_steer else steer_vis

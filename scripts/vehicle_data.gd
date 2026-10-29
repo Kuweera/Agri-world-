@@ -12,6 +12,10 @@ const OBSTACLES := [Rect2(-2.7, 5.3, 5.4, 4.4)]
 # type: "tractor" pulls implements (work width comes from the implement).
 #       "harvester" is a combine with its own header (work_width, in tiles).
 # power_hp is how strong the engine is. Speeds are units per second.
+# Drivetrain (see vehicle_model.gd): mass_kg is the machine alone (an implement's weight is added),
+# wheelbase is the distance between the axles in game units, max_steer_deg the steering lock at a
+# standstill (it shrinks with speed). "accel" is no longer used by the physics: acceleration now
+# comes from power_hp, mass_kg and grip.
 # model_path: "" means the vehicle is built in code; otherwise a res:// .glb (the game falls
 # back to the built-in model if it is missing). model_scale shrinks the real-size model.
 const VEHICLE_TYPES := ["tractor", "harvester"]
@@ -23,6 +27,9 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 3000,
 		"power_hp": 75,
+		"mass_kg": 3500,
+		"wheelbase": 1.5,
+		"max_steer_deg": 40,
 		"max_speed": 9.0,        # units per second
 		"reverse_factor": 0.5,   # reverse is half speed
 		"accel": 7.0,
@@ -43,6 +50,9 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 9000,
 		"power_hp": 160,
+		"mass_kg": 8500,
+		"wheelbase": 2.0,
+		"max_steer_deg": 35,
 		"max_speed": 11.0,
 		"reverse_factor": 0.5,
 		"accel": 7.5,
@@ -63,6 +73,9 @@ const VEHICLES := {
 		"type": "tractor",
 		"price": 18000,
 		"power_hp": 280,
+		"mass_kg": 18000,
+		"wheelbase": 2.0,
+		"max_steer_deg": 30,
 		"max_speed": 9.5,
 		"reverse_factor": 0.5,
 		"accel": 7.0,
@@ -84,6 +97,9 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 0,              # free: the combine you start with
 		"power_hp": 120,
+		"mass_kg": 8000,
+		"wheelbase": 3.4,
+		"max_steer_deg": 38,
 		"max_speed": 6.0,
 		"reverse_factor": 0.4,
 		"accel": 4.5,
@@ -107,6 +123,9 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 28000,
 		"power_hp": 250,
+		"mass_kg": 15000,
+		"wheelbase": 4.4,
+		"max_steer_deg": 35,
 		"max_speed": 7.0,
 		"reverse_factor": 0.4,
 		"accel": 5.0,
@@ -130,6 +149,9 @@ const VEHICLES := {
 		"type": "harvester",
 		"price": 52000,
 		"power_hp": 400,
+		"mass_kg": 22000,
+		"wheelbase": 4.8,
+		"max_steer_deg": 35,
 		"max_speed": 7.5,
 		"reverse_factor": 0.4,
 		"accel": 5.2,
