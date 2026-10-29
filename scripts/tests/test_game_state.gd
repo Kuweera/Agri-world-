@@ -778,6 +778,22 @@ func _init() -> void:
 	var dr_v := GameState.default_tractor()
 	_run(dr_v, dr_heavy, 1.0, 0.0, 600)
 	_check(absf(float(dr_v["speed"]) - float(dr_heavy["max_speed"])) < 0.01, "loaded tractor settles at reduced speed")
+	# Tool raised: free speed and fuel use, tool down: loaded speed and fuel use
+	var up_v := GameState.default_tractor()
+	var dn_v := GameState.default_tractor()
+	for uv in [up_v, dn_v]:
+		uv["x"] = 100.0
+		uv["z"] = -100.0
+		uv["fuel"] = 50.0
+	up_v["_working"] = false
+	dn_v["_working"] = true
+	for ui in 900:
+		VehicleModel.step(up_v, dr_heavy, 1.0, 0.0, 1.0 / 60.0)
+		VehicleModel.step(dn_v, dr_heavy, 1.0, 0.0, 1.0 / 60.0)
+	_check(absf(float(up_v["speed"]) - float(dr_cfg["max_speed"])) < 0.01, "tool raised: drives at full free speed")
+	_check(absf(float(dn_v["speed"]) - float(dr_heavy["max_speed"])) < 0.01, "tool down: slowed by the load")
+	_check(50.0 - float(up_v["fuel"]) < (50.0 - float(dn_v["fuel"])) * 3.0 and float(up_v["fuel"]) < 50.0, "fuel is still used with the tool raised")
+	_check(VehicleModel.total_mass(dr_heavy) > float(dr_cfg["mass_kg"]), "a raised tool still adds weight")
 	_check(ImplementData.type_of("plough_3") == "plough" and ImplementData.type_of("none") == "none", "id maps to type")
 	_check(ImplementData.type_of("bogus") == "none", "unknown id has no type")
 	_check(ImplementData.name_of("seeder_3") == "Wide Seeder" and ImplementData.name_of("none") == "None", "names")
