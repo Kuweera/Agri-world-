@@ -54,7 +54,7 @@ func _init() -> void:
 	head.add_child(title)
 	money_label = _label("", FONT)
 	head.add_child(money_label)
-	# TEST ONLY: remove this button (and _on_test_cash) before release.
+	# DEVELOPMENT TOOL: keep during development (master plan, section 3). A release build may hide it, not delete it.
 	var cash_btn := _button("+5000 test")
 	cash_btn.pressed.connect(_on_test_cash)
 	head.add_child(cash_btn)

@@ -52,7 +52,9 @@ var track_pitch := TRACK_PITCH
 var track_vi := -1
 var blob: MeshInstance3D
 var attach: Node3D                       # AttachmentPoint: implements built from the catalogue hang here
-var susp := Suspension.new_state()       # springs for lean and bounce (looks only)
+var susp := Suspension.new_state()       # springs for lean (looks only); the tyres stay on the ground
+var foot_half_len := 1.15                # half the machine's length and width (model size), limits the lean
+var foot_half_wid := 0.7
 var prev_speed := 0.0
 var prev_heading := 0.0
 var motion_ready := false
@@ -191,6 +193,8 @@ func _apply_vehicle(vid: String) -> void:
 	track_vi = -1
 	wheels = builtin_wheels
 	var veh: Dictionary = VehicleData.get_vehicle(vid)
+	foot_half_len = float(veh.get("hit_len", 2.3)) * 0.5
+	foot_half_wid = float(veh.get("hit_wid", 1.4)) * 0.5
 	var scene: PackedScene = null
 	if not veh.is_empty():
 		scene = MachineModels.glb_scene(str(veh["model_path"]))
@@ -211,13 +215,20 @@ func _apply_vehicle(vid: String) -> void:
 	var inst: Node3D = scene.instantiate()
 	inst.scale = Vector3(sc, sc, sc)
 	inst.rotation.y = PI
-	inst.position.z = MachineModels.bounds_of(inst).get_center().z * sc
+	var mb := MachineModels.bounds_of(inst)
+	inst.position.z = mb.get_center().z * sc
+	# Stand the model on the ground: some models were built with their tyres a few cm below
+	# (sinking) or above y = 0.
+	inst.position.y = -mb.position.y * sc
+	# The lean is limited by the model's real extent (a combine's header sticks out wide).
+	foot_half_len = mb.size.z * sc * 0.5
+	foot_half_wid = mb.size.x * sc * 0.5
 	add_child(inst)
 	glb_vehicle = inst
 	var hitch = inst.find_child("Hitch_Rear", true, false)
 	if hitch is Node3D and not is_combine:
 		var hp: Vector3 = _pos_in_root(inst, hitch as Node3D)
-		hitch_pos = Vector3(-hp.x * sc, hp.y * sc, -hp.z * sc + inst.position.z)
+		hitch_pos = Vector3(-hp.x * sc, hp.y * sc + inst.position.y, -hp.z * sc + inst.position.z)
 	var real_wheels: Array = []
 	if not tracked:
 		for nm in ["Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR"]:
@@ -290,13 +301,13 @@ func update_from(v: Dictionary, dt: float = 0.0) -> void:
 			var acc: float = (sp - prev_speed) / dt
 			var yaw_rate: float = wrapf(heading - prev_heading, -PI, PI) / dt
 			yaw_vis = yaw_rate
-			Suspension.step(susp, acc, sp, yaw_rate, dt)
+			Suspension.step(susp, acc, sp, yaw_rate, dt, foot_half_len, foot_half_wid)
 		prev_speed = sp
 		prev_heading = heading
 		motion_ready = true
 	else:
 		motion_ready = false
-	position = Vector3(v["x"], float(susp["bounce"]), v["z"])
+	position = Vector3(v["x"], Suspension.body_y(susp, foot_half_len, foot_half_wid), v["z"])
 	rotation = Vector3(float(susp["pitch"]), heading, float(susp["roll"]))
 	if dt > 0.0:
 		lift = move_toward(lift, 1.0 if raised else 0.0, dt / LIFT_TIME)
