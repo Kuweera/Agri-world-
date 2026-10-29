@@ -228,3 +228,11 @@
 - Far-away planted tiles now show assets/textures/fieldtex.png (made by tools/gen_fieldtex.py from the plant
   pictures): rows of the real plant colour over dark soil, a texture per crop and growth stage. Real 3D
   plants are drawn only within ~8 (Low) to ~12 (High) units, then the first plant layers thin out to 26-62.
+
+
+## Phase 1-2 (master plan): signing and tyre-ground contact
+- Every CI build made a new signing key, so no APK could update the installed one. Workflow now uses a permanent key from
+  GitHub secrets, rising version codes, and prints the signing fingerprint (docs/SIGNING.md). Needs the secrets added and one final uninstall.
+- Tyres no longer sink or hop: suspension.gd/tractor_view.gd (docs/PHYSICS_BASELINE.md). Repeatable report: scripts/tests/physics_report.gd.
+- Logic tests: 0 failures (headless, Godot 4.3). NOT yet built as APK or tested on the phone.
+- The +5000 test button is kept (machinery_shop.gd).
