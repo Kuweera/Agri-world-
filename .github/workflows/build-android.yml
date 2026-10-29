@@ -16,21 +16,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up templates, keystore and editor settings
+      - name: Set up templates, signing key and editor settings
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           mkdir -p ~/.local/share/godot/export_templates ~/.config/godot build/android
           mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
-          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
-            -keystore $HOME/debug.keystore -storepass android \
-            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          # SIGNING KEY. Android only installs an update over an installed app when both APKs are
+          # signed with the SAME key. The key therefore lives in GitHub secrets (see docs/SIGNING.md)
+          # and is reused by every build. Without the secrets a throw-away key is made (the old
+          # behaviour): the APK then cannot update an installed game and is named ...-TEMPKEY.
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KS_ALIAS" ]; then
+            echo "$KS_B64" | base64 -d > $HOME/agriworld.keystore
+            echo "KS_ALIAS=$KS_ALIAS" >> $GITHUB_ENV
+            echo "KS_PASS=$KS_PASS" >> $GITHUB_ENV
+            echo "APK_SUFFIX=" >> $GITHUB_ENV
+            echo "Using the permanent signing key (alias $KS_ALIAS)"
+          else
+            echo "::warning::No signing secrets set: using a TEMPORARY key. This APK cannot update an installed AgriWorld; see docs/SIGNING.md"
+            keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+              -keystore $HOME/agriworld.keystore -storepass android \
+              -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+            echo "KS_ALIAS=androiddebugkey" >> $GITHUB_ENV
+            echo "KS_PASS=android" >> $GITHUB_ENV
+            echo "APK_SUFFIX=-TEMPKEY" >> $GITHUB_ENV
+          fi
+          keytool -list -keystore $HOME/agriworld.keystore -storepass "$(grep '^KS_PASS=' $GITHUB_ENV | cut -d= -f2-)" | tail -3 || true
           JAVA_HOME_DIR=$(dirname $(dirname $(readlink -f $(which keytool))))
           echo "Java home: $JAVA_HOME_DIR"
+          # Debug exports use the same key, so debug and release APKs can replace each other.
           printf '%s\n' '[gd_resource type="EditorSettings" format=3]' '' '[resource]' \
             'export/android/android_sdk_path = "/usr/lib/android-sdk"' \
             "export/android/java_sdk_path = \"$JAVA_HOME_DIR\"" \
-            "export/android/debug_keystore = \"$HOME/debug.keystore\"" \
-            'export/android/debug_keystore_user = "androiddebugkey"' \
-            'export/android/debug_keystore_pass = "android"' \
+            "export/android/debug_keystore = \"$HOME/agriworld.keystore\"" \
+            "export/android/debug_keystore_user = \"$KS_ALIAS\"" \
+            "export/android/debug_keystore_pass = \"$(grep '^KS_PASS=' $GITHUB_ENV | cut -d= -f2-)\"" \
             > ~/.config/godot/editor_settings-4.tres
 
       - name: Allow compressed textures for Android
@@ -81,6 +103,9 @@ jobs:
           fi
           exit $code
 
+      - name: Vehicle physics report (information only)
+        run: timeout 120 godot --headless --script res://scripts/tests/physics_report.gd || true
+
       - name: Export game APK
         if: always()
         run: |
@@ -88,27 +113,42 @@ jobs:
           #   armeabi-v7a = 32-bit phones (budget phones like the TECNO Pop 7 need this one)
           #   arm64-v8a   = 64-bit phones
           # Each is a release build, with the debug build as a fallback if release fails.
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/debug.keystore"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="androiddebugkey"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="android"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/agriworld.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$KS_ALIAS"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$KS_PASS"
+          # Android refuses an update whose version code is not higher, so it rises with every build:
+          # code = run number x 10 + 1 (32-bit) or 2 (64-bit). Name 0.1.<run number>.
+          sed -i "s|^version/name=.*|version/name=\"0.1.${GITHUB_RUN_NUMBER}\"|" export_presets.cfg
+          grep -n "version/" export_presets.cfg
           sed -i "s|^run/main_scene=.*|run/main_scene=\"res://scenes/main.tscn\"|" project.godot
           grep main_scene project.godot
           for abi in armeabi-v7a arm64-v8a; do
+            if [ "$abi" = "armeabi-v7a" ]; then vc=$((GITHUB_RUN_NUMBER * 10 + 1)); else vc=$((GITHUB_RUN_NUMBER * 10 + 2)); fi
+            sed -i "s|^version/code=.*|version/code=$vc|" export_presets.cfg
             sed -i 's|^architectures/armeabi-v7a=.*|architectures/armeabi-v7a=false|' export_presets.cfg || true
             sed -i 's|^architectures/arm64-v8a=.*|architectures/arm64-v8a=false|' export_presets.cfg || true
             sed -i "s|^architectures/$abi=.*|architectures/$abi=true|" export_presets.cfg || true
             grep -n "architectures" export_presets.cfg || true
-            if godot --headless --verbose --export-release "Android" build/android/agriworld-main-$abi.apk; then
+            if godot --headless --verbose --export-release "Android" build/android/agriworld-main-$abi${APK_SUFFIX}.apk; then
               echo "EXPORT $abi: release build"
             else
               echo "EXPORT $abi: release failed, using debug build"
-              godot --headless --verbose --export-debug "Android" build/android/agriworld-main-$abi.apk
+              godot --headless --verbose --export-debug "Android" build/android/agriworld-main-$abi${APK_SUFFIX}.apk
             fi
           done
 
-      - name: APK size report
+      - name: APK size and signing report
         if: always()
-        run: ls -l build/android/*.apk || true
+        run: |
+          ls -l build/android/*.apk || true
+          # The signing certificate fingerprint must be IDENTICAL in every build, or Android will
+          # refuse to install it over the previous one.
+          for a in build/android/*.apk; do
+            echo "== $a"
+            keytool -printcert -jarfile "$a" 2>&1 | grep -i "SHA256\|Owner" || echo "(could not read signature)"
+            AS=$(find /usr/lib/android-sdk -name apksigner 2>/dev/null | head -1)
+            if [ -n "$AS" ]; then "$AS" verify --print-certs -v "$a" 2>&1 | grep -i "verifies\|SHA-256\|Number of signers" || true; fi
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()
