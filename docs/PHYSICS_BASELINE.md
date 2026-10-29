@@ -29,14 +29,23 @@ Measured on the real `tractor_view.gd` nodes (model bottom corners): before dip 
 * `tractor_view.gd`: stands each model on the ground from its measured bounds; lean limit comes from model size.
 * Trade-off: lean is now nearly invisible (about 0.3-0.5 degrees). Visible body lean with planted tyres needs wheels separated from the body.
 
-## Other findings (not changed yet)
-* No separate brake: braking and coasting stop identically (about 1.3 s). No handbrake, no gears, no traction or slip.
-* All tractors accelerate to 90% speed in 1.2-1.3 s regardless of power or mass. Heavy tractors are barely slowed by any implement.
-* Steering radius is a fixed 3-4 m at low speed (not derived from wheelbase) and grows with speed; the visual front-wheel angle comes from the yaw rate, not a steering angle.
-* Combine `hit_wid` (1.8-2.2) is far smaller than the model width (4.3-7.5).
-* `combine_large_b` front tyres float 7.4 cm; `tools/plot_data_tail.gd` has a parse error (unused tool script).
+## Drivetrain (phase 2, second change)
+`vehicle_model.gd` keeps the same `step()` interface, so autopilot and farm_main are unchanged.
+* **Acceleration** = min(grip, power / (mass x speed)). New data per vehicle in `vehicle_data.gd`: `mass_kg`, `wheelbase`, `max_steer_deg` (starting values, tune them). An implement's weight is added to the mass.
+* **Brake** is separate from coasting. Pressing the opposite direction while rolling brakes, then reverses. Letting go only coasts (engine braking). An implement lengthens the stop.
+* **Steering** is a bicycle model: yaw = speed x tan(wheel angle) / wheelbase. The wheel angle follows the input at a limited rate, the lock shrinks with speed, and sideways acceleration is capped at 0.7 g (understeer). The front wheels in `tractor_view.gd` now show that real angle.
+* Old `accel` and `turn_rate` fields remain in the data but the physics no longer reads them.
 
-## Proposed next steps
-1. Data-driven drivetrain: power, mass, torque curve, separate brake/handbrake, steering angle from wheelbase; tractors differ meaningfully. Autopilot and its tests depend on the current model, so change it behind the same `step()` interface and re-run the headless job tests.
-2. Separate wheels from the body so the body can lean visibly while tyres stay planted.
-3. Implement load driven by draft force and slope, then traction/slip.
+| vehicle | 0-90% speed | coast stop | brake stop | turn radius at 1 u/s |
+|---|---|---|---|---|
+| tractor 75 hp | 1.2 s -> 2.9 s | 5.7 -> 11.5 m | 5.7 -> 8.2 m | 3.0 -> 2.2 m |
+| tractor_heavy 160 hp | 1.3 -> 4.8 s | 8.0 -> 17.2 m | 8.0 -> 12.3 m | 4.2 -> 3.4 m |
+| tractor_tracked 280 hp | 1.2 -> 4.4 s | 6.4 -> 12.8 m | 6.4 -> 9.1 m | 4.3 -> 4.1 m |
+
+Autopilot jobs take about 17% longer (13.95 s -> 16.35 s for the one-row test), because of the slower, mass-based acceleration. The test limit was raised from 15 s to 20 s.
+
+## Still to do
+* Handbrake and gear/direction selection (needs the new mobile controls, phase 5).
+* Draft force from the working implement, slope, and wheel slip; the implement-load model is still the old power-versus-weight rule.
+* Separate wheels from the body so the body can lean visibly.
+* `combine_large_b` front tyres float 7.4 cm (model flaw); combine `hit_wid` is far smaller than the model width; `tools/plot_data_tail.gd` has a parse error (unused).

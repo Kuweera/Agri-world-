@@ -236,3 +236,5 @@
 - Tyres no longer sink or hop: suspension.gd/tractor_view.gd (docs/PHYSICS_BASELINE.md). Repeatable report: scripts/tests/physics_report.gd.
 - Logic tests: 0 failures (headless, Godot 4.3). NOT yet built as APK or tested on the phone.
 - The +5000 test button is kept (machinery_shop.gd).
+- Drivetrain: mass/power-based acceleration, separate brake, bicycle-model steering with grip limit (docs/PHYSICS_BASELINE.md).
+  Logic tests 0 failures. New vehicle fields: mass_kg, wheelbase, max_steer_deg. Not yet tested on the phone.
