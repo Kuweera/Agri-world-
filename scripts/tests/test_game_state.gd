@@ -1280,7 +1280,7 @@ func _init() -> void:
 	sp_s = Suspension.new_state()
 	for sp_i in 60:
 		Suspension.step(sp_s, -8.0, 2.0, 0.0, 1.0 / 60.0)
-	_check(float(sp_s["pitch"]) > 0.03 and float(sp_s["pitch"]) <= Suspension.MAX_PITCH, "braking dips the nose")
+	_check(float(sp_s["pitch"]) > 0.002 and float(sp_s["pitch"]) <= Suspension.pitch_limit(2.0), "braking dips the nose a little")
 	_check(float(sp_s["impl_pitch"]) < 0.0, "the implement swings the other way")
 	for sp_i in 300:
 		Suspension.step(sp_s, 0.0, 0.0, 0.0, 1.0 / 60.0)
@@ -1288,7 +1288,7 @@ func _init() -> void:
 	var sp_up := Suspension.new_state()
 	for sp_i in 60:
 		Suspension.step(sp_up, 6.0, 2.0, 0.0, 1.0 / 60.0)
-	_check(float(sp_up["pitch"]) < -0.02, "accelerating lifts the nose")
+	_check(float(sp_up["pitch"]) < -0.002, "accelerating lifts the nose a little")
 	var sp_l := Suspension.new_state()
 	var sp_r := Suspension.new_state()
 	for sp_i in 60:
@@ -1300,7 +1300,23 @@ func _init() -> void:
 	for sp_i in 600:
 		Suspension.step(sp_b, 0.0, 3.0, 0.0, 1.0 / 60.0)
 		sp_peak = maxf(sp_peak, absf(float(sp_b["bounce"])))
-	_check(sp_peak > 0.002 and sp_peak <= Suspension.MAX_BOUNCE, "driving bounces a little")
+	_check(sp_peak == 0.0, "flat ground: no fake bounce")
+	# Tyres stay on the ground: whatever the lean, the lowest tyre rests on y = 0 and no tyre is
+	# more than the allowed squash above it.
+	var sp_t := Suspension.new_state()
+	var sp_lo := 0.0
+	var sp_hi := 0.0
+	for sp_i in 3000:
+		var sp_a2 := 30.0 * sin(float(sp_i) * 0.05)
+		Suspension.step(sp_t, sp_a2, 8.0, sp_a2 * 0.1, 1.0 / 60.0, 1.65, 0.7)
+		var sp_by := Suspension.body_y(sp_t, 1.65, 0.7)
+		for sp_cx in [-0.7, 0.7]:
+			for sp_cz in [-1.65, 1.65]:
+				var sp_y := sp_by + Suspension.tyre_y(sp_t, sp_cx, sp_cz)
+				sp_lo = minf(sp_lo, sp_y)
+				sp_hi = maxf(sp_hi, sp_y)
+	_check(sp_lo > -0.000001, "no tyre sinks below the ground")
+	_check(sp_hi <= 4.0 * Suspension.MAX_WHEEL_DEV + 0.000001, "no tyre lifts more than 4 cm")
 	var sp_x := Suspension.new_state()
 	var sp_ok := true
 	for sp_i in 5000:
@@ -1310,7 +1326,7 @@ func _init() -> void:
 			if not is_finite(float(sp_x[sp_k])):
 				sp_ok = false
 	_check(sp_ok, "extreme inputs stay finite")
-	_check(absf(float(sp_x["pitch"])) <= Suspension.MAX_PITCH and absf(float(sp_x["roll"])) <= Suspension.MAX_ROLL, "lean stays limited")
+	_check(absf(float(sp_x["pitch"])) <= Suspension.pitch_limit(2.0) and absf(float(sp_x["roll"])) <= Suspension.roll_limit(0.8), "lean stays limited")
 	for kind in ["unploughed", "ploughed", "stubble"]:
 		for tv in 3:
 			var tm: ArrayMesh = TileModels.build(kind, tv)
