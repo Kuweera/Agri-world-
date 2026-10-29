@@ -44,6 +44,11 @@ Measured on the real `tractor_view.gd` nodes (model bottom corners): before dip 
 
 Autopilot jobs take about 17% longer (13.95 s -> 16.35 s for the one-row test), because of the slower, mass-based acceleration. The test limit was raised from 15 s to 20 s.
 
+## Implement load only while working (phase 3, first step)
+`loaded_config` now also keeps `free_speed` and `free_fuel_use`. `farm_main.gd` sets `m["_working"] = not view.raised` before `VehicleModel.step`.
+Tool down: the loaded top speed and fuel use apply (as before). Tool raised: free speed and fuel use, but the implement's weight still counts for acceleration and braking.
+If `_working` is missing, step() assumes working, so existing callers and tests behave as before.
+
 ## Still to do
 * Handbrake and gear/direction selection (needs the new mobile controls, phase 5).
 * Draft force from the working implement, slope, and wheel slip; the implement-load model is still the old power-versus-weight rule.
