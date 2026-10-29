@@ -42,6 +42,7 @@ var quality := 0              # graphics quality 0 Low, 1 Medium, 2 High (sets t
 var mat_vc: StandardMaterial3D
 var mat_crop: StandardMaterial3D   # leaf-card atlas for crops
 var mat_ground: StandardMaterial3D
+var mat_field: StandardMaterial3D  # rows of crop for far-away planted tiles
 var mat_land: StandardMaterial3D
 var frame: MeshInstance3D          # outline of the selected plot
 var scenery
@@ -55,6 +56,7 @@ func _variant(i: int, n: int) -> int:
 func _ready() -> void:
 	mat_vc = MeshBuilder.vc_material()
 	mat_crop = MeshBuilder.card_material(CropModels.ATLAS)
+	mat_field = MeshBuilder.field_material("res://assets/textures/fieldtex.png")
 	scenery = FarmSceneryScript.new()
 	mat_ground = MeshBuilder.textured_material(SOIL_TEXTURE, 0.7, 1.25)
 	mat_land = MeshBuilder.textured_material(GRASS_TEXTURE, 0.35, 1.25)
@@ -145,11 +147,11 @@ func reset_plots() -> void:
 # only very close (or never) because overlapping leaf cards cost a lot on weak graphics chips.
 func _lod_layers() -> Array:
 	if quality <= 0:
-		return [{"detail": 1, "begin": 0.0, "end": 10.0}, {"detail": 0, "begin": 8.0, "end": 40.0}]
+		return [{"detail": 1, "begin": 0.0, "end": 8.0}, {"detail": 0, "begin": 6.0, "end": 26.0}]
 	if quality == 1:
-		return [{"detail": 2, "begin": 0.0, "end": 11.0}, {"detail": 1, "begin": 9.0, "end": 26.0}, {"detail": 0, "begin": 22.0, "end": 60.0}]
-	return [{"detail": 3, "begin": 0.0, "end": 14.0}, {"detail": 2, "begin": 11.0, "end": 30.0},
-		{"detail": 1, "begin": 26.0, "end": 50.0}, {"detail": 0, "begin": 46.0, "end": 90.0}]
+		return [{"detail": 2, "begin": 0.0, "end": 9.0}, {"detail": 1, "begin": 7.0, "end": 20.0}, {"detail": 0, "begin": 18.0, "end": 42.0}]
+	return [{"detail": 3, "begin": 0.0, "end": 12.0}, {"detail": 2, "begin": 10.0, "end": 24.0},
+		{"detail": 1, "begin": 22.0, "end": 38.0}, {"detail": 0, "begin": 36.0, "end": 62.0}]
 
 # Soil detail by distance: full ridges and clods close up, stripes further out, one flat square far away.
 # (A ploughed tile has about 110 triangles, so thousands of tiles in view are too much for a weak phone.)
@@ -231,13 +233,23 @@ func _set_ground(i: int, kind: String, variant: int, crop_id: String = "", stage
 	if tile_gkey[i] != "":
 		_batch_remove(ch, "ground", tile_gkey[i], i, tile_gslot, 0.0)
 	tile_gkey[i] = key
-	var meshes := [_tile_mesh(kind, variant), _lite_mesh(kind, crop_id, stage), _flat_mesh(kind, crop_id, stage)]
-	var mats := [mat_ground, mat_ground, mat_vc]
+	var gl := _ground_layers()
+	var meshes: Array
+	var mats: Array
 	var begins: Array = []
 	var ends: Array = []
-	for layer in _ground_layers():
-		begins.append(float(layer["begin"]))
-		ends.append(float(layer["end"]))
+	if crop_id != "":
+		# planted: real soil near the camera, then a textured tile showing crop rows
+		meshes = [_tile_mesh(kind, variant), _field_mesh(crop_id, stage)]
+		mats = [mat_ground, mat_field]
+		begins = [0.0, float(gl[1]["begin"])]
+		ends = [float(gl[0]["end"]), GROUND_RANGE]
+	else:
+		meshes = [_tile_mesh(kind, variant), _lite_mesh(kind), _flat_mesh(kind, "", 0)]
+		mats = [mat_ground, mat_ground, mat_vc]
+		for layer in gl:
+			begins.append(float(layer["begin"]))
+			ends.append(float(layer["end"]))
 	_batch_add(ch, "ground", key, meshes, mats, begins, ends, i, tile_gslot, 0.0)
 
 func _set_crop(i: int, key: String, crop_id: String, stage: int, variant: int) -> void:
@@ -267,6 +279,12 @@ func _lite_mesh(kind: String, crop_id: String = "", stage: int = 0) -> ArrayMesh
 		if crop_id != "":
 			tint = TileModels.far_color(kind, crop_id, stage)
 		mesh_cache[key] = TileModels.build_lite(kind, tint)
+	return mesh_cache[key]
+
+func _field_mesh(crop_id: String, stage: int) -> ArrayMesh:
+	var key := "fld:%s:%d" % [crop_id, stage]
+	if not mesh_cache.has(key):
+		mesh_cache[key] = TileModels.build_field(0 if crop_id == "maize" else 1, stage)
 	return mesh_cache[key]
 
 func _flat_mesh(kind: String, crop_id: String, stage: int) -> ArrayMesh:

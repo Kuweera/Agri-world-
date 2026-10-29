@@ -134,3 +134,18 @@ static func far_color(kind: String, crop_id: String, stage: int) -> Color:
 	if kind == "stubble":
 		return Color(0.5, 0.4, 0.24)
 	return Color(0.42, 0.45, 0.22)
+
+# One flat tile showing crop rows (fieldtex.png: 5 columns = growth stages, row 0 maize, row 1 beans).
+# Used for planted tiles that are far from the camera.
+static func build_field(crop_row: int, stage: int) -> ArrayMesh:
+	var mb := MeshBuilder.new()
+	mb.use_uv = true
+	var y := BASE_Y + 0.05
+	var u0 := float(clampi(stage, 0, 4)) / 5.0 + 0.002
+	var u1 := float(clampi(stage, 0, 4) + 1) / 5.0 - 0.002
+	var v0 := float(clampi(crop_row, 0, 1)) / 2.0 + 0.004
+	var v1 := float(clampi(crop_row, 0, 1) + 1) / 2.0 - 0.004
+	var c := Color(1.0, 1.0, 1.0)
+	mb.add_quad(Vector3(-HALF, y, -HALF), Vector3(HALF, y, -HALF), Vector3(HALF, y, HALF), Vector3(-HALF, y, HALF),
+		c, c, c, c, Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1))
+	return mb.build()

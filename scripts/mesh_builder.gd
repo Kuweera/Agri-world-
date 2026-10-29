@@ -65,6 +65,23 @@ static func card_material(path: String) -> StandardMaterial3D:
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 	return m
 
+# Plain textured ground (no cut-out): used for far-away planted tiles (assets/textures/fieldtex.png).
+static func field_material(path: String) -> StandardMaterial3D:
+	var m := vc_material()
+	if not ResourceLoader.exists(path):
+		return m
+	var src: Resource = load(path)
+	if src == null or not (src is Texture2D):
+		return m
+	var img: Image = (src as Texture2D).get_image()
+	if img == null or img.is_empty() or img.is_compressed():
+		return m
+	img.generate_mipmaps()
+	m.albedo_texture = ImageTexture.create_from_image(img)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
+	return m
+
 # UV rectangle of atlas cell i (4 x 4 grid, index = row * 4 + col), inset a little.
 static func cell_uv(i: int) -> Rect2:
 	var cx := float(i % 4) * 0.25
