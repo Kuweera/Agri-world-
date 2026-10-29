@@ -84,6 +84,10 @@ static func loaded_config(cfg: Dictionary, implement_id: String) -> Dictionary:
 	var over := clampf(ratio - FULL_SPEED_LOAD, 0.0, 1.0)
 	out["max_speed"] = float(cfg["max_speed"]) * f
 	out["accel"] = float(cfg["accel"]) * maxf(f, MIN_ACCEL_FACTOR)   # no longer used by step()
+	# The reduction above is the speed WHILE WORKING. With the tool raised (v["_working"] false) the machine
+	# drives at its free speed and fuel use, but still carries the weight (acceleration and braking).
+	out["free_speed"] = float(cfg["max_speed"])
+	out["free_fuel_use"] = float(cfg["fuel_use"])
 	out["mass_total"] = float(cfg.get("mass_kg", DEFAULT_MASS)) + ImplementData.weight_of(implement_id)
 	out["fuel_use"] = float(cfg["fuel_use"]) * (1.0 + FUEL_LOAD_BONUS * over)
 	out["load_ratio"] = ratio
@@ -93,7 +97,9 @@ static func loaded_config(cfg: Dictionary, implement_id: String) -> Dictionary:
 # others: the live machine dictionaries of the other machines. Driving into one pushes it.
 static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, delta: float,
 		others: Array = []) -> void:
-	var max_speed: float = cfg["max_speed"]
+	# v["_working"] (set by the game each frame; missing means working) is true while the tool is down.
+	var working: bool = bool(v.get("_working", true))
+	var max_speed: float = float(cfg["max_speed"]) if working else float(cfg.get("free_speed", cfg["max_speed"]))
 
 	# Longitudinal: grip- and power-limited drive, separate brake, coasting without throttle.
 	var speed0: float = v["speed"]
@@ -192,5 +198,5 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 
 	# Fuel and running hours only count while moving.
 	if absf(speed) > 0.05:
-		v["fuel"] = maxf(0.0, float(v["fuel"]) - float(cfg["fuel_use"]) * delta)
+		v["fuel"] = maxf(0.0, float(v["fuel"]) - float(cfg["fuel_use"] if working else cfg.get("free_fuel_use", cfg["fuel_use"])) * delta)
 		v["hours"] = float(v["hours"]) + delta / 3600.0

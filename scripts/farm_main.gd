@@ -452,6 +452,8 @@ func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bo
 			if not ap.active:
 				_auto_ended(id)
 
+	# The tool's load only slows the machine while it is down and working; raised, it only adds weight.
+	m["_working"] = not view.raised
 	VehicleModel.step(m, mcfg, thr, st, dt, state.others_of(id))
 
 	if id == _active_id():
