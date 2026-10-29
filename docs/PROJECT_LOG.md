@@ -225,3 +225,6 @@
 - Soil also has distance levels now (farm_grid._ground_layers): full ridges near, 10-triangle stripes
   medium, one flat square far (coloured by the crop on it). Crop detail is 0..3 (0 = one card per plant).
   Reason: ~1900 owned tiles x 110 triangles was ~200k triangles in view (FPS 7-15).
+- Far-away planted tiles now show assets/textures/fieldtex.png (made by tools/gen_fieldtex.py from the plant
+  pictures): rows of the real plant colour over dark soil, a texture per crop and growth stage. Real 3D
+  plants are drawn only within ~8 (Low) to ~12 (High) units, then the first plant layers thin out to 26-62.
