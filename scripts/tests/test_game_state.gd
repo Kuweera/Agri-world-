@@ -255,7 +255,77 @@ func _init() -> void:
 	var v := GameState.default_tractor()
 	_check(v["fuel"] == 20.0 and v["speed"] == 0.0, "tractor starts full and stopped")
 	_run(v, cfg, 1.0, 0.0, 60)
-	_check(absf(v["speed"] - float(cfg["accel"])) < 0.001, "accelerates at its rated acceleration (1 s)")
+	_check(v["speed"] > 3.0 and v["speed"] < 5.5, "accelerates hard from rest (grip-limited): %.2f u/s after 1 s" % float(v["speed"]))
+	# --- Drivetrain: power, mass, brake, steering ---
+	var dt_t := {}
+	for dt_id in ["tractor", "tractor_heavy", "tractor_tracked", "combine_small", "combine_large", "combine_large_b"]:
+		var dt_cfg: Dictionary = VehicleData.VEHICLES[dt_id]
+		var dt_v := GameState.default_tractor()
+		dt_v["fuel"] = 999.0
+		var dt_n := 0
+		while float(dt_v["speed"]) < 0.9 * float(dt_cfg["max_speed"]) and dt_n < 3600:
+			VehicleModel.step(dt_v, dt_cfg, 1.0, 0.0, 1.0 / 60.0)
+			dt_n += 1
+			dt_v["z"] = -100.0   # stay clear of the farmhouse
+		dt_t[dt_id] = float(dt_n) / 60.0
+	_check(dt_t["tractor"] > 1.5 and dt_t["tractor_heavy"] > dt_t["tractor"], "a heavier tractor takes longer to reach speed (%.1f vs %.1f s)" % [dt_t["tractor_heavy"], dt_t["tractor"]])
+	_check(dt_t["tractor"] != dt_t["tractor_heavy"] and dt_t["tractor_heavy"] != dt_t["tractor_tracked"], "tractors do not perform identically")
+	var dt_pl := VehicleModel.loaded_config(VehicleData.VEHICLES["tractor"], "plough_5")
+	var dt_un := VehicleData.VEHICLES["tractor"]
+	_check(VehicleModel.drive_accel(dt_pl, 5.0) < VehicleModel.drive_accel(dt_un, 5.0), "an implement's weight slows the acceleration")
+	_check(VehicleModel.brake_decel(dt_pl) < VehicleModel.brake_decel(dt_un), "an implement's weight lengthens the stop")
+	var dt_big := VehicleModel.drive_accel(VehicleData.VEHICLES["tractor_heavy"], 8.0)
+	var dt_small := VehicleModel.drive_accel(VehicleData.VEHICLES["tractor"], 8.0)
+	_check(dt_big > 0.0 and dt_small > 0.0 and dt_big != dt_small, "power and mass decide the pull at speed")
+	# Brake versus coast, from top speed on open ground
+	var br_v := GameState.default_tractor()
+	var co_v := GameState.default_tractor()
+	for bv in [br_v, co_v]:
+		bv["speed"] = float(cfg["max_speed"])
+		bv["z"] = -100.0
+	var br_d := 0.0
+	var co_d := 0.0
+	for bi in 600:
+		VehicleModel.step(br_v, cfg, -1.0, 0.0, 1.0 / 60.0)
+		VehicleModel.step(co_v, cfg, 0.0, 0.0, 1.0 / 60.0)
+		if br_v["speed"] > 0.0:
+			br_d += float(br_v["speed"]) / 60.0
+		if co_v["speed"] > 0.0:
+			co_d += float(co_v["speed"]) / 60.0
+	_check(br_d > 3.0 and br_d < co_d, "braking stops shorter than coasting (%.1f vs %.1f m)" % [br_d, co_d])
+	_check(float(br_v["speed"]) < 0.0, "holding reverse after braking backs up")
+	# Steering: bicycle model, turning circle follows the wheelbase and steering lock
+	var st_v := GameState.default_tractor()
+	st_v["x"] = 100.0
+	st_v["z"] = -100.0
+	st_v["speed"] = 1.0
+	VehicleModel.step(st_v, cfg, 0.111, 1.0, 1.0 / 60.0)
+	_check(absf(float(st_v["_steer"])) <= VehicleModel.STEER_RATE / 60.0 + 0.000001, "the steering wheel angle cannot jump")
+	var st_h0: float = st_v["heading"]
+	var st_sum := 0.0
+	for si in 180:
+		VehicleModel.step(st_v, cfg, 0.111, 1.0, 1.0 / 60.0)
+		st_sum += wrapf(float(st_v["heading"]) - st_h0, -PI, PI)
+		st_h0 = float(st_v["heading"])
+	var st_r := float(st_v["speed"]) * 3.0 / absf(st_sum)
+	var st_expect := float(cfg["wheelbase"]) / tan(VehicleModel.steer_limit(cfg, float(st_v["speed"])))
+	_check(absf(st_r - st_expect) / st_expect < 0.15, "turning circle follows wheelbase and lock (%.2f vs %.2f)" % [st_r, st_expect])
+	_check(st_sum < 0.0, "steering right turns the heading down")
+	var gr_v := GameState.default_tractor()
+	gr_v["x"] = 100.0
+	gr_v["z"] = -100.0
+	gr_v["speed"] = float(cfg["max_speed"])
+	var gr_max := 0.0
+	for gi in 240:
+		var gr_h: float = gr_v["heading"]
+		VehicleModel.step(gr_v, cfg, 1.0, 1.0, 1.0 / 60.0)
+		gr_max = maxf(gr_max, absf(wrapf(float(gr_v["heading"]) - gr_h, -PI, PI)) * 60.0 * float(gr_v["speed"]))
+	_check(gr_max <= VehicleModel.LAT_MU * VehicleModel.G * 1.01, "sideways acceleration stays within grip (%.2f)" % gr_max)
+	var ns_v := GameState.default_tractor()
+	var ns_h: float = ns_v["heading"]
+	for ni in 60:
+		VehicleModel.step(ns_v, cfg, 0.0, 1.0, 1.0 / 60.0)
+	_check(is_equal_approx(float(ns_v["heading"]), ns_h), "cannot steer while standing still")
 	_check(v["z"] < 3.0, "default heading drives toward -z")
 	_check(v["fuel"] < 20.0, "driving uses fuel")
 	_check(v["hours"] > 0.0, "driving adds running hours")
@@ -476,7 +546,7 @@ func _init() -> void:
 	endr.tractor["z"] = 1.25
 	endr.tractor["heading"] = PI / 2.0
 	res = _auto_job(endr, "plough", t0)
-	_check(res["finished"] and res["time"] < 15.0, "nearby row is done quickly (" + str(res["time"]) + " s)")
+	_check(res["finished"] and res["time"] < 20.0, "nearby row is done quickly (" + str(res["time"]) + " s)")
 	var far = GameState.new()
 	for fr in 8:
 		for fc in 8:

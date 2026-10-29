@@ -107,7 +107,7 @@ func _init() -> void:
 			id, int(cfg["power_hp"]), float(cfg["max_speed"]), _time_to_90(cfg), coast.x, brk.x,
 			_fmt(_radius(cfg, 1.0)), _radius(cfg, float(cfg["max_speed"])), -tr.x * 100.0, tr.y * 100.0])
 	print("")
-	print("## Implement load (top speed in u/s, acceleration in u/s^2, engine load ratio)")
+	print("## Implement load (top speed in u/s, acceleration at 5 u/s in u/s^2 from the drivetrain, engine load ratio)")
 	print("")
 	var ids: Array = ["none"] + ImplementData.ITEMS.keys()
 	var head := "| implement | kg |"
@@ -121,7 +121,7 @@ func _init() -> void:
 		var row := "| %s | %d |" % [iid, int(ImplementData.weight_of(iid))]
 		for vid in VehicleData.ids_of_type("tractor"):
 			var lc: Dictionary = VehicleModel.loaded_config(VehicleData.VEHICLES[vid], iid)
-			row += " %.1f / %.1f / %.2f |" % [float(lc["max_speed"]), float(lc["accel"]), float(lc["load_ratio"])]
+			row += " %.1f / %.1f / %.2f |" % [float(lc["max_speed"]), VehicleModel.drive_accel(lc, 5.0), float(lc["load_ratio"])]
 		print(row)
 	quit()
 
