@@ -239,3 +239,4 @@
 - Drivetrain: mass/power-based acceleration, separate brake, bicycle-model steering with grip limit (docs/PHYSICS_BASELINE.md).
   Logic tests 0 failures. New vehicle fields: mass_kg, wheelbase, max_steer_deg. Not yet tested on the phone.
 - Implement load now applies only while the tool is down (vehicle_model.gd, one added line in farm_main.gd _run_machine). Tests 0 failures.
+- Autopilot now steers (dubins.gd + pure pursuit) instead of pivoting; update() takes the machine cfg; side-tile sampling fixed in game_state.gd. Tests 0 failures. Not yet tested on the phone.

@@ -49,6 +49,16 @@ Autopilot jobs take about 17% longer (13.95 s -> 16.35 s for the one-row test), 
 Tool down: the loaded top speed and fuel use apply (as before). Tool raised: free speed and fuel use, but the implement's weight still counts for acceleration and braking.
 If `_working` is missing, step() assumes working, so existing callers and tests behave as before.
 
+## Autopilot turns with real steering
+Before, the autopilot set the heading itself and pivoted on the spot between lanes, which looked like sliding.
+* `scripts/dubins.gd` (new): shortest forward-only path between two poses for a given turning radius (arcs plus a straight; three-arc "bulb" turns when lanes are closer than two radii), and arc-then-straight to a point. Checked to 0.00001 m on random poses.
+* `autopilot.gd`: lanes are poses (start with a 1.2 u run-in, end). Between them it plans the Dubins turn from the machine's real pose and follows it with pure pursuit, returning only throttle and steer. `update(tr, dt, cfg)` now takes the machine's loaded vehicle settings (wheelbase, steering lock, speed); the old call without cfg still works with a default tractor.
+* Speed: 3 u/s in turns, slowing in time before them, full speed on lanes; the tool lowers during the run-in.
+* Road waypoints are only passed (cut smoothly); one that would need a big loop is skipped.
+* `game_state.gd` `work_with_tractor`: side tiles of a wide tool are now found from the centre of the tile under the tool. With real steering the heading is never exactly axis-aligned, and a side tile could be skipped at a column boundary.
+* Known limits: no obstacle avoidance (a machine facing the farmhouse still gets "blocked"), no reversing, a big combine needs about 8 u of room for its turn.
+* Tests: ploughing the whole field with steered turns, never stops to pivot, never turns faster than the steering lock allows, exact turn paths.
+
 ## Still to do
 * Handbrake and gear/direction selection (needs the new mobile controls, phase 5).
 * Draft force from the working implement, slope, and wheel slip; the implement-load model is still the old power-versus-weight rule.
