@@ -12,6 +12,7 @@ const FarmLayout := preload("res://scripts/farm_layout.gd")
 const FarmGridScript := preload("res://scripts/farm_grid.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
 const Dubins := preload("res://scripts/dubins.gd")
+const DriveControls := preload("res://scripts/drive_controls.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
 const TileModels := preload("res://scripts/tile_models.gd")
@@ -509,6 +510,47 @@ func _init() -> void:
 	blk.tractor["heading"] = PI
 	res = _auto_job(blk, "plough", t0)
 	_check(res["started"] and not res["finished"], "autopilot gives up when blocked")
+
+	# --- Brake pedal and the touch controls ---
+	var bp_full := GameState.default_tractor()
+	var bp_half := GameState.default_tractor()
+	var bp_none := GameState.default_tractor()
+	for bv2 in [bp_full, bp_half, bp_none]:
+		bv2["speed"] = 8.0
+		bv2["x"] = 100.0
+		bv2["z"] = -100.0
+	bp_full["_brake"] = 1.0
+	bp_half["_brake"] = 0.5
+	for bi2 in 60:
+		VehicleModel.step(bp_full, cfg, 0.0, 0.0, 1.0 / 60.0)
+		VehicleModel.step(bp_half, cfg, 0.0, 0.0, 1.0 / 60.0)
+		VehicleModel.step(bp_none, cfg, 0.0, 0.0, 1.0 / 60.0)
+	_check(float(bp_full["speed"]) < float(bp_half["speed"]) and float(bp_half["speed"]) < float(bp_none["speed"]), "a harder brake pedal slows more")
+	var bp_hold := GameState.default_tractor()
+	bp_hold["_brake"] = 1.0
+	bp_hold["z"] = -100.0
+	for bi3 in 120:
+		VehicleModel.step(bp_hold, cfg, 1.0, 0.0, 1.0 / 60.0)
+	_check(float(bp_hold["speed"]) == 0.0, "the brake holds the machine against the accelerator")
+	var dc = DriveControls.new()
+	dc.accel_v = 0.6
+	dc._update_outputs()
+	_check(absf(dc.throttle - 0.6) < 0.0001 and dc.brake == 0.0, "accelerator drives forward")
+	dc.reverse = true
+	dc._update_outputs()
+	_check(absf(dc.throttle + 0.6) < 0.0001, "reverse gear: the accelerator drives backwards")
+	dc.handbrake = true
+	dc._update_outputs()
+	_check(dc.throttle == 0.0 and dc.brake == 1.0, "handbrake: no drive, full brake")
+	dc.handbrake = false
+	dc.wheel_angle = DriveControls.WHEEL_MAX
+	dc._update_outputs()
+	_check(absf(dc.steer - 1.0) < 0.0001, "wheel at full lock is full steering")
+	dc.wheel_angle = 0.02
+	dc._update_outputs()
+	_check(dc.steer == 0.0, "a tiny wheel angle is a dead zone")
+	_check(dc._pedal_value(Rect2(0, 0, 100, 200), Vector2(50, 0)) == DriveControls.PEDAL_MIN and dc._pedal_value(Rect2(0, 0, 100, 200), Vector2(50, 200)) == 1.0, "pedal: light at the top, full at the bottom")
+	dc.free()
 
 	# --- Autopilot turns like a real machine: never spins on the spot, never turns faster than the drivetrain allows ---
 	var rt_s = GameState.new()
