@@ -504,6 +504,7 @@ func _drive_view(dt: float) -> void:
 	if vehicle_text_timer >= 0.2:
 		vehicle_text_timer = 0.0
 		hud.set_vehicle_text(_vehicle_text(tr))
+		hud.set_speed(absf(float(tr["speed"])))
 
 func _vehicle_text(tr: Dictionary) -> String:
 	var secs := int(float(tr["hours"]) * 3600.0)
@@ -684,8 +685,30 @@ func _auto_ended(id: String = "") -> void:
 
 # ---- Mode switching ----
 
+# Shop and Map sit top-right in the overview; while driving that corner belongs to the speed lever,
+# so they move up beside the Menu button.
+func _place_shop_buttons(driving_now: bool) -> void:
+	var items: Array = [[shop_button, 0], [map_button, 1]]
+	for it in items:
+		var b: Button = it[0]
+		var k: int = it[1]
+		var a := 0.0 if driving_now else 1.0
+		b.anchor_left = a
+		b.anchor_right = a
+		if driving_now:
+			b.offset_left = 190.0 + 130.0 * k
+			b.offset_right = 310.0 + 130.0 * k
+			b.offset_top = 56.0
+			b.offset_bottom = 112.0
+		else:
+			b.offset_left = -190.0
+			b.offset_right = -20.0
+			b.offset_top = 112.0 + 72.0 * k
+			b.offset_bottom = 176.0 + 72.0 * k
+
 func _enter_drive() -> void:
 	driving = true
+	_place_shop_buttons(true)
 	var old := selected
 	selected = -1
 	if old >= 0:
@@ -709,6 +732,7 @@ func _enter_drive() -> void:
 
 # Back to the overview. Machines on autopilot keep working; the one you were driving stops.
 func _enter_manage() -> void:
+	_place_shop_buttons(false)
 	hud.set_auto_active(false)
 	driving = false
 	rig.allow_rotate = true

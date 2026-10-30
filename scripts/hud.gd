@@ -2,7 +2,8 @@ extends CanvasLayer
 # On-screen UI.
 # Always: debug readout (top-left), Menu button, Money/Stock (top-right), messages.
 # Manage mode: tile panel (bottom-left) + action buttons (bottom-right).
-# Drive mode: steering and throttle strips, tool buttons (left), vehicle readout (top).
+# Drive mode: wheel + horn, throttle lever, round tool/implement/machine buttons (drive_controls.gd),
+# a small action bar (left) and the vehicle readout (top).
 # Menu: graphics quality, debug readout on/off, reset farm.
 
 signal action_pressed(action: String)
@@ -24,8 +25,6 @@ var quality_buttons: Array = []
 var debug_button: Button
 var buttons := {}
 var drive_buttons := {}
-var machine_row := HBoxContainer.new()   # quick switch between machines: previous, name, next
-var machine_buttons := {}
 var drive_controls
 var msg_until := 0
 var frame_times := PackedFloat32Array()
@@ -96,29 +95,20 @@ func _ready() -> void:
 
 	# Drive mode widgets
 	drive_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	drive_box.position = Vector2(20, 130)
-	drive_box.size = Vector2(320, 390)
+	drive_box.position = Vector2(20, 124)
+	drive_box.size = Vector2(200, 270)
 	drive_box.add_theme_constant_override("separation", 4)
 	add_child(drive_box)
-	_add_button(drive_box, drive_buttons, "implement_next", "Tool: None", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "lift", "Lower tool", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "camera_reset", "Camera: behind", 320.0, 52.0, 22)
-	_add_button(drive_box, drive_buttons, "manage", "Manage view", 320.0, 52.0, 22)
-
-	# Quick machine switch, top centre under the vehicle line.
-	machine_row.position = Vector2(vp.x / 2.0 - 230.0, 160.0)
-	machine_row.add_theme_constant_override("separation", 6)
-	machine_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(machine_row)
-	_add_button(machine_row, machine_buttons, "machine_prev", "<", 70.0, 52.0, 26)
-	_add_button(machine_row, machine_buttons, "machine_next", "Machine", 310.0, 52.0, 22)
-	_add_button(machine_row, machine_buttons, "machine_next2", ">", 70.0, 52.0, 26)
+	# The tool, lift and machine buttons are the round icons in drive_controls.gd.
+	_add_button(drive_box, drive_buttons, "auto", "Auto: Start", 200.0, 48.0, 20)
+	_add_button(drive_box, drive_buttons, "seed_next", "Seed: Maize", 200.0, 48.0, 20)
+	_add_button(drive_box, drive_buttons, "refuel", "Refuel", 200.0, 48.0, 20)
+	_add_button(drive_box, drive_buttons, "camera_reset", "Camera", 200.0, 48.0, 20)
+	_add_button(drive_box, drive_buttons, "manage", "Manage view", 200.0, 48.0, 20)
 
 	drive_controls = DriveControlsScript.new()
 	add_child(drive_controls)
+	drive_controls.action.connect(func(a: String) -> void: action_pressed.emit(a))
 
 	_build_menu(vp)
 
@@ -204,28 +194,34 @@ func set_drive_mode(on: bool) -> void:
 	tile_panel.visible = not on
 	action_box.visible = not on
 	drive_box.visible = on
-	machine_row.visible = on
 	vehicle_label.visible = on
 	drive_controls.visible = on
 	drive_controls.reset()
 
 func set_drive_texts(tool_name: String, seed_name: String) -> void:
-	drive_buttons["implement_next"].text = "Tool: " + tool_name
+	drive_controls.tool_name = tool_name
+	drive_controls.queue_redraw()
 	drive_buttons["seed_next"].text = "Seed: " + seed_name
 
 # The middle machine button names the machine being driven and where it is in the list.
 func set_machine_text(machine_name: String, index: int, total: int) -> void:
-	machine_buttons["machine_next"].text = "%s  (%d/%d)" % [machine_name, index + 1, total]
+	drive_controls.machine_name = machine_name
+	drive_controls.machine_index = index
+	drive_controls.machine_total = total
+	drive_controls.lever_zero()      # a new machine starts with the throttle at zero
 
 # The lift button shows what a tap will do.
 func set_lift_text(raised: bool, header: bool) -> void:
-	var part := "header" if header else "tool"
-	drive_buttons["lift"].text = ("Lower " if raised else "Raise ") + part
+	drive_controls.raised = raised
+	drive_controls.header_mode = header
+	drive_controls.queue_redraw()
 
 # The strips stay active during Auto (touching one takes control back) but are dimmed.
 func set_auto_active(on: bool) -> void:
 	drive_buttons["auto"].text = "Auto: Stop" if on else "Auto: Start"
 	drive_controls.modulate.a = 0.45 if on else 1.0
+	if on:
+		drive_controls.lever_zero()
 
 func set_menu_state(quality: int, debug_on: bool) -> void:
 	for q in quality_buttons.size():
@@ -238,6 +234,10 @@ func set_debug_visible(on: bool) -> void:
 
 func set_vehicle_text(t: String) -> void:
 	vehicle_label.text = t
+
+# Speed shown on the lever readout, in km/h (1 game unit is about 1 m).
+func set_speed(units_per_s: float) -> void:
+	drive_controls.speed_kmh = units_per_s * 3.6
 
 func get_steer() -> float:
 	return drive_controls.steer
