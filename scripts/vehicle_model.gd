@@ -27,7 +27,7 @@ const PUSH_DRAG_RATE := 1.5   # extra slowing per second while pushing (the push
 # Drivetrain. Units: 1 game unit is treated as 1 metre for forces, so G = 9.8 u/s^2.
 # Acceleration is limited by grip at low speed and by engine power at high speed:
 #   a = min(TRACTION_MU * G, power / (mass * speed)).  Heavier or weaker machines accelerate slower.
-# Pressing the opposite direction while moving brakes (BRAKE_MU * G, less when an implement adds mass),
+# Pressing the opposite direction while moving brakes (rolling drag plus BRAKE_MU * G, less when an implement adds mass),
 # then reverses. Letting go of the throttle only coasts (rolling resistance and engine braking).
 # Steering is a bicycle model: yaw rate = speed * tan(steer angle) / wheelbase. The steer angle follows
 # the input at STEER_RATE, its limit shrinks with speed, and sideways acceleration is limited to LAT_MU * G
@@ -36,7 +36,7 @@ const G := 9.8
 const DRIVE_EFF := 0.75
 const TRACTION_MU := 0.55
 const V_MIN := 0.5
-const BRAKE_MU := 0.5
+const BRAKE_MU := 0.35
 const COAST_DECEL := 3.5
 const STEER_RATE := 1.4
 const STEER_SPEED_LOSS := 0.5
@@ -105,9 +105,13 @@ static func step(v: Dictionary, cfg: Dictionary, throttle: float, steer: float, 
 	var speed0: float = v["speed"]
 	var powered: bool = v["fuel"] > 0.0
 	var sp := speed0
-	if throttle != 0.0 and absf(speed0) > 0.1 and signf(throttle) != signf(speed0):
+	var pedal := clampf(float(v.get("_brake", 0.0)), 0.0, 1.0)   # brake pedal or handbrake, set by the game
+	if pedal > 0.01:
+		sp = move_toward(speed0, 0.0, (COAST_DECEL + brake_decel(cfg) * pedal) * delta)
+		v["_braking"] = true
+	elif throttle != 0.0 and absf(speed0) > 0.1 and signf(throttle) != signf(speed0):
 		# The other direction is pressed while still rolling: brake first, then reverse.
-		sp = move_toward(speed0, 0.0, brake_decel(cfg) * delta)
+		sp = move_toward(speed0, 0.0, (COAST_DECEL + brake_decel(cfg)) * delta)
 		v["_braking"] = true
 	else:
 		v["_braking"] = false

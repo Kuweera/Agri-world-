@@ -426,13 +426,13 @@ func _simulate(dt: float) -> void:
 		if not machines.has(id):
 			continue
 		if id == act and driving:
-			_run_machine(id, dt, hud.get_throttle(), hud.get_steer(), true)
+			_run_machine(id, dt, hud.get_throttle(), hud.get_steer(), true, hud.get_brake())
 		else:
 			_run_machine(id, dt, 0.0, 0.0, false)
 
 # One machine for one frame: autopilot or controls, physics (other machines are solid), the
 # tool going down or up, the work itself, and its picture.
-func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bool) -> void:
+func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bool, brk_in: float = 0.0) -> void:
 	var m: Dictionary = state.fleet[id]
 	var rt: Dictionary = machines[id]
 	var ap = rt["ap"]
@@ -442,7 +442,7 @@ func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bo
 	var st := st_in
 
 	if ap.active:
-		if manual and (absf(thr) > 0.2 or absf(st) > 0.2):
+		if manual and (absf(thr) > 0.2 or absf(st) > 0.2 or brk_in > 0.2):
 			_stop_auto("Manual control", id)
 		else:
 			ap.holding = bool(m.get("_blocked", false))
@@ -454,6 +454,7 @@ func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bo
 
 	# The tool's load only slows the machine while it is down and working; raised, it only adds weight.
 	m["_working"] = not view.raised
+	m["_brake"] = 0.0 if ap.active else brk_in   # brake pedal / handbrake (0 to 1); the autopilot never brakes this way
 	VehicleModel.step(m, mcfg, thr, st, dt, state.others_of(id))
 
 	if id == _active_id():

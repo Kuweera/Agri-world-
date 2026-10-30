@@ -245,6 +245,10 @@ func get_steer() -> float:
 func get_throttle() -> float:
 	return drive_controls.throttle
 
+# Brake pedal (0..1); 1 while the handbrake is on.
+func get_brake() -> float:
+	return drive_controls.brake
+
 func set_tile_text(t: String) -> void:
 	tile_label.text = t
 
