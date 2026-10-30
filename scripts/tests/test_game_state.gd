@@ -533,12 +533,19 @@ func _init() -> void:
 		VehicleModel.step(bp_hold, cfg, 1.0, 0.0, 1.0 / 60.0)
 	_check(float(bp_hold["speed"]) == 0.0, "the brake holds the machine against the accelerator")
 	var dc = DriveControls.new()
-	dc.accel_v = 0.6
+	dc.lever_rect = Rect2(0, 100, 80, 400)
+	dc.lever = dc._lever_value(Vector2(40, dc._lever_y(0.6)))
 	dc._update_outputs()
-	_check(absf(dc.throttle - 0.6) < 0.0001 and dc.brake == 0.0, "accelerator drives forward")
-	dc.reverse = true
+	_check(absf(dc.throttle - 0.6) < 0.01 and dc.brake == 0.0, "lever forward drives forward")
+	dc.lever = dc._lever_value(Vector2(40, dc._lever_y(-0.5)))
 	dc._update_outputs()
-	_check(absf(dc.throttle + 0.6) < 0.0001, "reverse gear: the accelerator drives backwards")
+	_check(absf(dc.throttle + 0.5) < 0.01, "lever below the notch reverses")
+	_check(dc._lever_value(Vector2(40, dc._lever_y(0.03))) == 0.0, "lever clicks to zero at the notch")
+	_check(dc._lever_value(Vector2(40, -500)) == 1.0 and dc._lever_value(Vector2(40, 5000)) == -1.0, "lever is clamped at both ends")
+	dc.lever = 0.6
+	dc.lever_zero()
+	_check(dc.lever == 0.0 and dc.throttle == 0.0, "lever_zero puts the throttle back to zero")
+	dc.lever = 0.6
 	dc.handbrake = true
 	dc._update_outputs()
 	_check(dc.throttle == 0.0 and dc.brake == 1.0, "handbrake: no drive, full brake")
