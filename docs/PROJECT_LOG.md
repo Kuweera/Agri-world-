@@ -241,3 +241,12 @@
 - Implement load now applies only while the tool is down (vehicle_model.gd, one added line in farm_main.gd _run_machine). Tests 0 failures.
 - Autopilot now steers (dubins.gd + pure pursuit) instead of pivoting; update() takes the machine cfg; side-tile sampling fixed in game_state.gd. Tests 0 failures. Not yet tested on the phone.
 - Steering wheel + accelerator/brake pedals + F/R + handbrake replace the touch strips (drive_controls.gd, hud.gd, farm_main.gd, vehicle_model.gd). Tests 0 failures. Layout not yet seen on the phone.
+
+## 2026-10-30 - Drive cockpit redesign
+- Drive mode HUD rebuilt (scripts/drive_controls.gd, hud.gd): big steering wheel with a horn button in the hub
+  (horn tone generated in code), throttle lever on the far right that stays where it is left (notch = zero,
+  below it = reverse) with a km/h readout, brake pedal + handbrake, machine name at the bottom centre.
+- Three round buttons: gear = lower/raise tool or combine header, implement = next attachment, tractor = next machine.
+- Auto / Seed / Refuel / Camera / Manage moved to a slim bar on the left; Shop and Map move beside Menu while driving.
+- Throttle goes to zero on Auto start and on switching machine. Action names are unchanged.
+- Verified by rendering the real scene headless (layout only). NOT yet tested on the phone.
