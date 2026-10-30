@@ -240,3 +240,4 @@
   Logic tests 0 failures. New vehicle fields: mass_kg, wheelbase, max_steer_deg. Not yet tested on the phone.
 - Implement load now applies only while the tool is down (vehicle_model.gd, one added line in farm_main.gd _run_machine). Tests 0 failures.
 - Autopilot now steers (dubins.gd + pure pursuit) instead of pivoting; update() takes the machine cfg; side-tile sampling fixed in game_state.gd. Tests 0 failures. Not yet tested on the phone.
+- Steering wheel + accelerator/brake pedals + F/R + handbrake replace the touch strips (drive_controls.gd, hud.gd, farm_main.gd, vehicle_model.gd). Tests 0 failures. Layout not yet seen on the phone.

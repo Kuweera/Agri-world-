@@ -59,8 +59,16 @@ Before, the autopilot set the heading itself and pivoted on the spot between lan
 * Known limits: no obstacle avoidance (a machine facing the farmhouse still gets "blocked"), no reversing, a big combine needs about 8 u of room for its turn.
 * Tests: ploughing the whole field with steered turns, never stops to pivot, never turns faster than the steering lock allows, exact turn paths.
 
+## Driving controls (steering wheel, pedals)
+`drive_controls.gd` replaces the two sliding strips:
+* **Steering wheel** (bottom-left, right of the button column): put a finger on it and turn it; it follows the finger, locks at about 137 degrees each way, and springs back when released.
+* **Accelerator** and **brake** pedals (bottom-right): analog, lighter at the top of the pedal and full at the bottom; slide the finger to change. They work together with the wheel (separate fingers).
+* **F/R** selector: the accelerator drives forward or backward. **P**: handbrake (blocks drive, full brake).
+* `hud.gd` gets `get_brake()`; `farm_main.gd` passes it to `_run_machine` and sets `m["_brake"]`; `vehicle_model.gd` brakes with rolling drag plus `BRAKE_MU x g` x pedal. Touching the controls cancels the autopilot as before. Brake stops: tractor 5.8 m, heavy 8.6 m, tracked 6.4 m from top speed.
+* The layout is computed from the screen size once at start and has not been checked on a real screen yet.
+
 ## Still to do
-* Handbrake and gear/direction selection (needs the new mobile controls, phase 5).
+* Brake lights, horn, indicators, and a settings screen for control size/sensitivity.
 * Draft force from the working implement, slope, and wheel slip; the implement-load model is still the old power-versus-weight rule.
 * Separate wheels from the body so the body can lean visibly.
 * `combine_large_b` front tyres float 7.4 cm (model flaw); combine `hit_wid` is far smaller than the model width; `tools/plot_data_tail.gd` has a parse error (unused).
