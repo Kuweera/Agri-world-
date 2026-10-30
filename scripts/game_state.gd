@@ -524,11 +524,16 @@ func work_with_tractor(cfg: Dictionary, now: float, crop_id: String, machine: Di
 	var width: int = maxi(1, int(cfg.get("work_width", 1))) if comb else ImplementData.width_of(impl_id)
 	var targets: Array = [idx]
 	var half := int((width - 1) / 2)
+	# The side tiles are found from the CENTRE of the tile under the tool, not from its exact position:
+	# a machine that is a hair off its heading would otherwise land a side tile in the next column and
+	# skip it (the centre tile is only worked once).
+	var tcx := FarmLayout.col_x(int(tiles[idx]["col"]), str(tiles[idx]["plot"]))
+	var tcz := FarmLayout.row_z(int(tiles[idx]["row"]), str(tiles[idx]["plot"]))
 	for k in range(1, half + 1):
 		for side in [-1.0, 1.0]:
 			var nj := FarmLayout.world_to_tile(
-				cx + cos(h) * side * float(k) * TILE_PITCH,
-				cz - sin(h) * side * float(k) * TILE_PITCH, plots)
+				tcx + cos(h) * side * float(k) * TILE_PITCH,
+				tcz - sin(h) * side * float(k) * TILE_PITCH, plots)
 			if nj >= 0 and not targets.has(nj):
 				targets.append(nj)
 	var kind: String = "harvester" if comb else ImplementData.type_of(impl_id)

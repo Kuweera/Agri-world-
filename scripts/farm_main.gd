@@ -446,7 +446,7 @@ func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bo
 			_stop_auto("Manual control", id)
 		else:
 			ap.holding = bool(m.get("_blocked", false))
-			var ctl: Vector2 = ap.update(m, dt)
+			var ctl: Vector2 = ap.update(m, dt, mcfg)
 			thr = ctl.x
 			st = ctl.y
 			if not ap.active:
