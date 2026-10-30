@@ -11,6 +11,7 @@ const VehicleModel := preload("res://scripts/vehicle_model.gd")
 const FarmLayout := preload("res://scripts/farm_layout.gd")
 const FarmGridScript := preload("res://scripts/farm_grid.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
+const Dubins := preload("res://scripts/dubins.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const CropModels := preload("res://scripts/crop_models.gd")
 const TileModels := preload("res://scripts/tile_models.gd")
@@ -81,7 +82,7 @@ func _auto_job(s, kind: String, now0: float, fuel: float = 20.0) -> Dictionary:
 	var t := 0.0
 	var dt := 1.0 / 60.0
 	while ap.active and t < 300.0:
-		var ctl: Vector2 = ap.update(s.tractor, dt)
+		var ctl: Vector2 = ap.update(s.tractor, dt, vcfg)
 		VehicleModel.step(s.tractor, vcfg, ctl.x, ctl.y, dt)
 		if ap.working:
 			s.work_with_tractor(vcfg, now0 + t, "beans")
@@ -104,7 +105,7 @@ func _auto_wide(s, impl: String, now0: float, fuel: float = 20.0) -> Dictionary:
 	var t := 0.0
 	var dt := 1.0 / 60.0
 	while ap.active and t < 400.0:
-		var ctl: Vector2 = ap.update(s.tractor, dt)
+		var ctl: Vector2 = ap.update(s.tractor, dt, vcfg)
 		VehicleModel.step(s.tractor, vcfg, ctl.x, ctl.y, dt)
 		if ap.working:
 			s.work_with_tractor(vcfg, now0 + t, "beans")
@@ -501,13 +502,59 @@ func _init() -> void:
 	res = _auto_job(part, "plough", t0)
 	_check(res["finished"] and _count_state(part, "unploughed") == 0, "autopilot ploughs only the rows that need it")
 
-	# Blocked: tractor behind the farmhouse cannot reach the corridor
+	# Blocked: tractor behind the farmhouse, facing it, cannot get through (the autopilot does not plan around obstacles yet)
 	var blk = GameState.new()
 	blk.tractor["x"] = 0.0
 	blk.tractor["z"] = 10.5
-	blk.tractor["heading"] = 0.0
+	blk.tractor["heading"] = PI
 	res = _auto_job(blk, "plough", t0)
 	_check(res["started"] and not res["finished"], "autopilot gives up when blocked")
+
+	# --- Autopilot turns like a real machine: never spins on the spot, never turns faster than the drivetrain allows ---
+	var rt_s = GameState.new()
+	rt_s.tractor["implement"] = "plough"
+	rt_s.tractor["fuel"] = 20.0
+	rt_s.last_work_tile = -1
+	var rt_cfg: Dictionary = VehicleModel.loaded_config(VehicleData.VEHICLES["tractor"], "plough")
+	var rt_ap = AutoPilotScript.new()
+	rt_ap.start(rt_s.tractor, rt_s.jobs_for("plough", t0), float(rt_cfg["work_offset"]), 1, 8)
+	var rt_t := 0.0
+	var rt_slow := 0.0
+	var rt_worst_ratio := 0.0
+	var rt_prev_h: float = rt_s.tractor["heading"]
+	while rt_ap.active and rt_t < 200.0:
+		var rt_ctl: Vector2 = rt_ap.update(rt_s.tractor, 1.0 / 60.0, rt_cfg)
+		VehicleModel.step(rt_s.tractor, rt_cfg, rt_ctl.x, rt_ctl.y, 1.0 / 60.0)
+		if rt_ap.working:
+			rt_s.work_with_tractor(rt_cfg, t0 + rt_t, "beans")
+		var rt_yaw := absf(wrapf(float(rt_s.tractor["heading"]) - rt_prev_h, -PI, PI)) * 60.0
+		rt_prev_h = float(rt_s.tractor["heading"])
+		var rt_sp := absf(float(rt_s.tractor["speed"]))
+		# The most it can turn at this speed: the steering lock over the wheelbase (plus a little rounding).
+		var rt_max_yaw: float = rt_sp * tan(VehicleModel.steer_limit(rt_cfg, rt_sp)) / VehicleModel.wheelbase_of(rt_cfg)
+		if rt_sp > 0.5:
+			rt_worst_ratio = maxf(rt_worst_ratio, rt_yaw / maxf(0.001, rt_max_yaw))
+		if rt_t > 3.0 and rt_ap.active and rt_sp < 0.5:
+			rt_slow += 1.0 / 60.0
+		rt_t += 1.0 / 60.0
+	_check(rt_ap.finished and _count_state(rt_s, "ploughed") == 64, "steered autopilot ploughs the whole field")
+	_check(rt_slow < 0.5, "autopilot never stops to pivot on the spot (%.2f s slow)" % rt_slow)
+	_check(rt_worst_ratio < 1.05, "autopilot never turns faster than the steering allows (%.2f of the limit)" % rt_worst_ratio)
+	# Turn paths (dubins.gd): exact end pose, and a lane-to-lane turn only 1.5 apart is possible
+	var dub_rng := RandomNumberGenerator.new()
+	dub_rng.seed = 11
+	var dub_worst := 0.0
+	for dub_i in 200:
+		var dub_q := [dub_rng.randf_range(-10, 10), dub_rng.randf_range(-10, 10), dub_rng.randf_range(0, TAU),
+			dub_rng.randf_range(-10, 10), dub_rng.randf_range(-10, 10), dub_rng.randf_range(0, TAU)]
+		var dub_rho := dub_rng.randf_range(1.5, 6.0)
+		var dub_p: Dictionary = Dubins.shortest(dub_q[0], dub_q[1], dub_q[2], dub_q[3], dub_q[4], dub_q[5], dub_rho)
+		var dub_s: Dictionary = Dubins.sample(dub_q[0], dub_q[1], dub_q[2], dub_rho, dub_p, 0.05)
+		var dub_e: Vector2 = dub_s["pts"][dub_s["pts"].size() - 1]
+		dub_worst = maxf(dub_worst, dub_e.distance_to(Vector2(dub_q[3], dub_q[4])))
+		dub_worst = maxf(dub_worst, absf(wrapf(float(dub_s["th"][dub_s["th"].size() - 1]) - dub_q[5], -PI, PI)))
+	_check(dub_worst < 0.001, "turn paths end exactly on the target pose (%.6f)" % dub_worst)
+	_check(not Dubins.shortest(0, 0, 0.0, 0, 1.5, PI, 2.5).is_empty(), "a turn between lanes 1.5 apart exists")
 
 	# --- Autopilot: only goes where work is needed ---
 	var jt = GameState.new()
