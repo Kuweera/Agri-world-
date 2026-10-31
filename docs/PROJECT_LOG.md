@@ -268,3 +268,13 @@
 - Known limits: a combine's header sits ahead of it, so its lane start pose is already 7-10 m past the field edge (lane geometry, not the turn).
   The one-time turn search takes about 0.1 s on a PC (more on a phone) the first time a turn shape is met. Autopilot still does not avoid obstacles.
 - NOT yet tested on the phone.
+
+## 2026-10-31 - Update 8: RECOVERY BASELINE (autopilot rolled back)
+- Problem: after update 7 (reverse turns) the autopilot was dead on the phone: tractors stopped before finishing, combines kept reversing.
+- Action (Phase 0 of the recovery directive): scripts/autopilot.gd and scripts/dubins.gd restored byte-for-byte from changed_files_only_4.zip
+  (the last version that finished jobs on the phone; updates 5 and 6 did not touch these files). Nothing rewritten from memory.
+- Update 6 cockpit (drive_controls.gd, hud.gd, farm_main.gd) is kept as is.
+- Consequence: lane-end turns are forward-only Dubins again and can swing over the road (known, accepted for the baseline).
+- Tests: reverse-turn and headland checks in scripts/tests/test_game_state.gd replaced by "finishes the field" checks. Not run (no Godot here).
+- Root cause of the update 7 failure is still UNKNOWN. Reverse planning is not to be reintroduced until reproduced in the real game (Phase 1).
+- NOT yet built or tested on the phone. Owner test: install over the old app, run tractors and combines on autopilot, confirm they finish.
