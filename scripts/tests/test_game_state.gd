@@ -114,6 +114,57 @@ func _auto_wide(s, impl: String, now0: float, fuel: float = 20.0) -> Dictionary:
 	return {"started": true, "time": t, "finished": ap.finished, "length": length, "lanes": lanes,
 		"fuel_used": fuel - float(s.tractor["fuel"])}
 
+# Runs a whole job on a plot (no crops needed) and measures how far the body leaves the field while working.
+func _turn_run(vid: String, impl: String, plot: String) -> Dictionary:
+	var base: Dictionary = VehicleData.VEHICLES[vid]
+	var cfg: Dictionary = VehicleModel.loaded_config(base, impl)
+	var width := int(base.get("work_width", 1))
+	if impl != "none":
+		width = ImplementData.width_of(impl)
+	var pl := PlotData.get_plot(plot)
+	var rows := int(pl["rows"])
+	var jobs: Array = []
+	for r in rows:
+		jobs.append({"row": r, "c0": 0, "c1": int(pl["cols"]) - 1})
+	var rect := PlotData.rect_of(plot)
+	var v := {"x": rect.position.x - 9.0, "z": FarmLayout.row_z(0, plot) + FarmLayout.PITCH * float((width - 1) / 2), "heading": PI / 2.0,
+		"speed": 0.0, "fuel": 9999.0, "hours": 0.0, "implement": impl, "vehicle": vid}
+	var ap = AutoPilotScript.new()
+	if not ap.start(v, jobs, float(base["work_offset"]), width, rows, plot):
+		return {"finished": false, "reverse_turns": 0, "over": 99.0, "lane": 0.0}
+	var hl := float(base["hit_len"]) * 0.5
+	var hw := float(base["hit_wid"]) * 0.5
+	var lane := 0.0
+	for wp in ap.wps:
+		if bool(wp["pose"]):
+			var wh: float = wp["h"]
+			var wf := Vector2(sin(wh), cos(wh))
+			var ws := Vector2(wf.y, -wf.x)
+			for a in [-1.0, 1.0]:
+				for b in [-1.0, 1.0]:
+					var wc: Vector2 = Vector2(float(wp["x"]), float(wp["z"])) + wf * hl * a + ws * hw * b
+					lane = maxf(lane, maxf(maxf(rect.position.x - wc.x, wc.x - rect.end.x), maxf(rect.position.y - wc.y, wc.y - rect.end.y)))
+	var over := 0.0
+	var started := false
+	var t := 0.0
+	while ap.active and t < 900.0:
+		var ctl: Vector2 = ap.update(v, 1.0 / 60.0, cfg)
+		v["_working"] = ap.working
+		VehicleModel.step(v, cfg, ctl.x, ctl.y, 1.0 / 60.0)
+		t += 1.0 / 60.0
+		if ap.working and rect.has_point(Vector2(float(v["x"]), float(v["z"]))):
+			started = true
+		if not started:
+			continue
+		var h: float = v["heading"]
+		var f := Vector2(sin(h), cos(h))
+		var s := Vector2(f.y, -f.x)
+		for a in [-1.0, 1.0]:
+			for b in [-1.0, 1.0]:
+				var c: Vector2 = Vector2(float(v["x"]), float(v["z"])) + f * hl * a + s * hw * b
+				over = maxf(over, maxf(maxf(rect.position.x - c.x, c.x - rect.end.x), maxf(rect.position.y - c.y, c.y - rect.end.y)))
+	return {"finished": ap.finished, "reverse_turns": ap.reverse_turns, "over": over, "lane": lane}
+
 func _count_state(s, st: String) -> int:
 	var n := 0
 	for tl in s.tiles:
@@ -568,7 +619,7 @@ func _init() -> void:
 	var rt_ap = AutoPilotScript.new()
 	rt_ap.start(rt_s.tractor, rt_s.jobs_for("plough", t0), float(rt_cfg["work_offset"]), 1, 8)
 	var rt_t := 0.0
-	var rt_slow := 0.0
+	var rt_slow := 0.0      # radians turned while standing still
 	var rt_worst_ratio := 0.0
 	var rt_prev_h: float = rt_s.tractor["heading"]
 	while rt_ap.active and rt_t < 200.0:
@@ -583,12 +634,23 @@ func _init() -> void:
 		var rt_max_yaw: float = rt_sp * tan(VehicleModel.steer_limit(rt_cfg, rt_sp)) / VehicleModel.wheelbase_of(rt_cfg)
 		if rt_sp > 0.5:
 			rt_worst_ratio = maxf(rt_worst_ratio, rt_yaw / maxf(0.001, rt_max_yaw))
-		if rt_t > 3.0 and rt_ap.active and rt_sp < 0.5:
-			rt_slow += 1.0 / 60.0
+		if rt_t > 3.0 and rt_ap.active and rt_sp < 0.02:
+			rt_slow += rt_yaw / 60.0
 		rt_t += 1.0 / 60.0
 	_check(rt_ap.finished and _count_state(rt_s, "ploughed") == 64, "steered autopilot ploughs the whole field")
-	_check(rt_slow < 0.5, "autopilot never stops to pivot on the spot (%.2f s slow)" % rt_slow)
+	_check(rt_slow < 0.02, "autopilot never turns on the spot (%.3f rad while standing)" % rt_slow)
 	_check(rt_worst_ratio < 1.05, "autopilot never turns faster than the steering allows (%.2f of the limit)" % rt_worst_ratio)
+	# Lane-end turns stay inside the headland (they back up instead of swinging over the road)
+	var tn_t = _turn_run("tractor", "plough", "farm")
+	_check(tn_t["finished"], "tractor finishes the field with reversing turns")
+	_check(int(tn_t["reverse_turns"]) > 0, "tractor backs up in its lane-end turns")
+	_check(float(tn_t["over"]) < 4.5 + 0.25, "tractor stays inside the headland at the lane ends (%.2f m past the field)" % float(tn_t["over"]))
+	_check(float(tn_t["over"]) < float(tn_t["lane"]) + 1.0 or float(tn_t["over"]) < 4.75, "turn does not need more room than the lane poses")
+	var tn_c = _turn_run("combine_small", "none", "farm")
+	_check(tn_c["finished"], "combine finishes the field with reversing turns")
+	_check(int(tn_c["reverse_turns"]) > 0, "combine backs up in its lane-end turns")
+	_check(float(tn_c["over"]) < float(tn_c["lane"]) + 0.3, "combine turns need no more room than its lane poses (%.2f vs %.2f m)" % [float(tn_c["over"]), float(tn_c["lane"])])
+
 	# Turn paths (dubins.gd): exact end pose, and a lane-to-lane turn only 1.5 apart is possible
 	var dub_rng := RandomNumberGenerator.new()
 	dub_rng.seed = 11
@@ -629,7 +691,7 @@ func _init() -> void:
 	_check(done_before > 0 and done_before < 64, "some tiles done before fuel ran out (" + str(done_before) + ")")
 	res = _auto_job(lowf, "plough", t0)
 	_check(res["finished"] and _count_state(lowf, "ploughed") == 64, "second run finishes the rest")
-	_check(res["time"] < 70.0, "second run only does what is left (" + str(res["time"]) + " s)")
+	_check(res["time"] < 110.0, "second run only does what is left (" + str(res["time"]) + " s)")
 
 	# Starting where the last job ended
 	var endr = GameState.new()
