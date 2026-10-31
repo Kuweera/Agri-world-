@@ -13,6 +13,7 @@ const ImplementData := preload("res://scripts/implement_data.gd")
 const MachineryShopScript := preload("res://scripts/machinery_shop.gd")
 const TractorViewScript := preload("res://scripts/tractor_view.gd")
 const AutoPilotScript := preload("res://scripts/autopilot.gd")
+const AutoPilotDiagScript := preload("res://scripts/autopilot_diag.gd")
 const SettingsScript := preload("res://scripts/settings.gd")
 const EnvironmentSetupScript := preload("res://scripts/environment_setup.gd")
 const MapViewScript := preload("res://scripts/map_view.gd")
@@ -29,6 +30,7 @@ var hud
 var state
 var tractor_view          # view of the machine being driven
 var autopilot             # autopilot of the machine being driven
+var ap_diag := AutoPilotDiagScript.new()   # writes user://autopilot_diag.log while Debug info is On (read-only)
 var settings: Dictionary = {}
 var cfg: Dictionary = {}
 var selected := -1
@@ -421,6 +423,8 @@ func _process(delta: float) -> void:
 # Every machine moves every frame: the one you drive follows your controls, the others follow
 # their autopilot (or stand still).
 func _simulate(dt: float) -> void:
+	if bool(settings["debug"]):
+		ap_diag.tick(dt)
 	var act := _active_id()
 	for id in state.fleet.keys():
 		if not machines.has(id):
@@ -456,6 +460,8 @@ func _run_machine(id: String, dt: float, thr_in: float, st_in: float, manual: bo
 	m["_working"] = not view.raised
 	m["_brake"] = 0.0 if ap.active else brk_in   # brake pedal / handbrake (0 to 1); the autopilot never brakes this way
 	VehicleModel.step(m, mcfg, thr, st, dt, state.others_of(id))
+	if bool(settings["debug"]):
+		ap_diag.record(id, ap, m, thr, st, float(m["_brake"]), view.raised, int(ap.job_worked))
 
 	if id == _active_id():
 		if float(m["fuel"]) <= 0.0 and not empty_warned:
@@ -844,6 +850,10 @@ func _on_action(action: String) -> void:
 		SettingsScript.save_settings(settings)
 		hud.set_debug_visible(bool(settings["debug"]))
 		hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
+		if bool(settings["debug"]):
+			hud.set_message("Autopilot log: " + ProjectSettings.globalize_path("user://autopilot_diag.log"), 6000)
+		else:
+			ap_diag.flush()
 		return
 	if action == "drive":
 		_enter_drive()
