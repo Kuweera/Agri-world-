@@ -163,7 +163,7 @@ func _turn_run(vid: String, impl: String, plot: String) -> Dictionary:
 			for b in [-1.0, 1.0]:
 				var c: Vector2 = Vector2(float(v["x"]), float(v["z"])) + f * hl * a + s * hw * b
 				over = maxf(over, maxf(maxf(rect.position.x - c.x, c.x - rect.end.x), maxf(rect.position.y - c.y, c.y - rect.end.y)))
-	return {"finished": ap.finished, "reverse_turns": ap.reverse_turns, "over": over, "lane": lane}
+	return {"finished": ap.finished, "reverse_turns": int(ap.get("reverse_turns")) if "reverse_turns" in ap else 0, "over": over, "lane": lane}
 
 func _count_state(s, st: String) -> int:
 	var n := 0
@@ -640,16 +640,12 @@ func _init() -> void:
 	_check(rt_ap.finished and _count_state(rt_s, "ploughed") == 64, "steered autopilot ploughs the whole field")
 	_check(rt_slow < 0.02, "autopilot never turns on the spot (%.3f rad while standing)" % rt_slow)
 	_check(rt_worst_ratio < 1.05, "autopilot never turns faster than the steering allows (%.2f of the limit)" % rt_worst_ratio)
-	# Lane-end turns stay inside the headland (they back up instead of swinging over the road)
+	# RECOVERY BASELINE (update 8): the update 4 autopilot is back, forward-only turns. Reverse-turn and headland
+	# checks are suspended until reverse turns are rebuilt and proven in the real game.
 	var tn_t = _turn_run("tractor", "plough", "farm")
-	_check(tn_t["finished"], "tractor finishes the field with reversing turns")
-	_check(int(tn_t["reverse_turns"]) > 0, "tractor backs up in its lane-end turns")
-	_check(float(tn_t["over"]) < 4.5 + 0.25, "tractor stays inside the headland at the lane ends (%.2f m past the field)" % float(tn_t["over"]))
-	_check(float(tn_t["over"]) < float(tn_t["lane"]) + 1.0 or float(tn_t["over"]) < 4.75, "turn does not need more room than the lane poses")
+	_check(tn_t["finished"], "tractor finishes the field (recovery baseline)")
 	var tn_c = _turn_run("combine_small", "none", "farm")
-	_check(tn_c["finished"], "combine finishes the field with reversing turns")
-	_check(int(tn_c["reverse_turns"]) > 0, "combine backs up in its lane-end turns")
-	_check(float(tn_c["over"]) < float(tn_c["lane"]) + 0.3, "combine turns need no more room than its lane poses (%.2f vs %.2f m)" % [float(tn_c["over"]), float(tn_c["lane"])])
+	_check(tn_c["finished"], "combine finishes the field (recovery baseline)")
 
 	# Turn paths (dubins.gd): exact end pose, and a lane-to-lane turn only 1.5 apart is possible
 	var dub_rng := RandomNumberGenerator.new()
