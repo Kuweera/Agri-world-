@@ -29,27 +29,31 @@ static func _word(w: int, alpha: float, beta: float, d: float) -> Array:
 	match w:
 		0:  # LSL
 			var p2 := 2.0 + d * d - 2.0 * c_ab + 2.0 * d * (sa - sb)
-			if p2 < 0.0:
+			if p2 < -0.000000001:
 				return []
+			p2 = maxf(p2, 0.0)
 			var tmp1 := atan2(cb - ca, d + sa - sb)
 			return [_mod2pi(-alpha + tmp1), sqrt(p2), _mod2pi(beta - tmp1)]
 		1:  # RSR
 			var p2 := 2.0 + d * d - 2.0 * c_ab + 2.0 * d * (sb - sa)
-			if p2 < 0.0:
+			if p2 < -0.000000001:
 				return []
+			p2 = maxf(p2, 0.0)
 			var tmp1 := atan2(ca - cb, d - sa + sb)
 			return [_mod2pi(alpha - tmp1), sqrt(p2), _mod2pi(-beta + tmp1)]
 		2:  # LSR
 			var p2 := -2.0 + d * d + 2.0 * c_ab + 2.0 * d * (sa + sb)
-			if p2 < 0.0:
+			if p2 < -0.000000001:
 				return []
+			p2 = maxf(p2, 0.0)
 			var p := sqrt(p2)
 			var tmp0 := atan2(-ca - cb, d + sa + sb) - atan2(-2.0, p)
 			return [_mod2pi(-alpha + tmp0), p, _mod2pi(-_mod2pi(beta) + tmp0)]
 		3:  # RSL
 			var p2 := d * d - 2.0 + 2.0 * c_ab - 2.0 * d * (sa + sb)
-			if p2 < 0.0:
+			if p2 < -0.000000001:
 				return []
+			p2 = maxf(p2, 0.0)
 			var p := sqrt(p2)
 			var tmp0 := atan2(ca + cb, d - sa - sb) - atan2(2.0, p)
 			return [_mod2pi(alpha - tmp0), p, _mod2pi(beta - tmp0)]
