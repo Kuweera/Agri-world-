@@ -72,3 +72,13 @@ Before, the autopilot set the heading itself and pivoted on the spot between lan
 * Draft force from the working implement, slope, and wheel slip; the implement-load model is still the old power-versus-weight rule.
 * Separate wheels from the body so the body can lean visibly.
 * `combine_large_b` front tyres float 7.4 cm (model flaw); combine `hit_wid` is far smaller than the model width; `tools/plot_data_tail.gd` has a parse error (unused).
+
+## Autopilot lane-end turns (2026-10-31)
+Body past the field edge during the job, flat farm plot (road edge = 4.5 m):
+| machine | before | after |
+|---|---|---|
+| tractor | 8.7 | 4.3 |
+| tractor_heavy + plough | 12.7 | 4.75 |
+| combine_small | 21.2 | 7.3 (lane pose itself needs 7.3) |
+| combine_large | 28.8 | 9.0 (lane pose needs 8.8) |
+Run `godot --headless --script res://scripts/tests/turn_report.gd` to reproduce.

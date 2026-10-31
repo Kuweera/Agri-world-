@@ -250,3 +250,21 @@
 - Auto / Seed / Refuel / Camera / Manage moved to a slim bar on the left; Shop and Map move beside Menu while driving.
 - Throttle goes to zero on Auto start and on switching machine. Action names are unchanged.
 - Verified by rendering the real scene headless (layout only). NOT yet tested on the phone.
+
+## 2026-10-31 - Autopilot turns stay inside the headland (reverse gear)
+- Problem (from the phone): at the end of a lane the machine swung far out, across the road into the next field.
+  Measured before the change: tractor body 8.7 m past the field edge (road edge is 4.5), big combines up to 30 m.
+- Now a lane-end turn must keep the whole body (oriented footprint) inside the field plus the headland up to the road edge.
+  If the forward turn would leave it, autopilot.gd plans a multi-point turn that backs up:
+  1. mirror-symmetric 3/5/7-arc turns (forward, back, forward ...) solved on a grid of angles;
+  2. if none fit, a hybrid A* (forward/reverse arcs on a 15 degree heading lattice) that finishes with one smooth forward or backed-up Dubins path.
+  Found turns are cached by shape, so the search runs about once per job.
+- Following reverse paths: stop at each gear change, wait for the steering wheel to swing round, back up with the steering sign flipped,
+  slower in reverse (2 u/s) and slow at lane ends (1.5 u/s). A lane end only counts as reached when the heading is right.
+- Also fixed: dubins.gd lost exact arcs to rounding (p2 slightly below zero).
+- New tests: reversing turns for the tractor and a combine; the old "never pivots" test now means "never turns while standing still".
+  scripts/tests/turn_report.gd prints the measurements.
+- After (same measurements): tractor 4.3 m, heavy tractor 4.75 m, combines need no more room than the lane start/end poses themselves.
+- Known limits: a combine's header sits ahead of it, so its lane start pose is already 7-10 m past the field edge (lane geometry, not the turn).
+  The one-time turn search takes about 0.1 s on a PC (more on a phone) the first time a turn shape is met. Autopilot still does not avoid obstacles.
+- NOT yet tested on the phone.
