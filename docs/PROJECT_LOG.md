@@ -278,3 +278,13 @@
 - Tests: reverse-turn and headland checks in scripts/tests/test_game_state.gd replaced by "finishes the field" checks. Not run (no Godot here).
 - Root cause of the update 7 failure is still UNKNOWN. Reverse planning is not to be reintroduced until reproduced in the real game (Phase 1).
 - NOT yet built or tested on the phone. Owner test: install over the old app, run tractors and combines on autopilot, confirm they finish.
+
+## 2026-10-31 - Update 9: Phase 1.1 autopilot diagnostics (no behaviour change)
+- Owner confirmed update 8 baseline: all tested machines finish their jobs on the phone.
+- New scripts/autopilot_diag.gd (read-only): while "Debug info" is On, writes user://autopilot_diag.log
+  (rotates at 1.5 MB to .old). S lines 4x/s per active autopilot: idx, path_i, gear dir, cusp, speed, target speed, throttle, brake,
+  steering, distance to waypoint, tool raised, tiles worked, blocked/holding, stationary time, stuck_time. E lines: START, WP change,
+  WORKING flips, TOOL raised/lowered, GEAR change, STATIONARY (>2 s), END (reason, finished, tiles).
+- scripts/farm_main.gd: three small hooks (preload/var, tick in _simulate, record after VehicleModel.step) and a message with the log path when Debug is switched on. Nothing else touched.
+- Hypothesis 4 of the handover (latched cockpit lever fights the autopilot) is unlikely: update 6 cockpit + restored autopilot finish jobs. hud.set_auto_active already zeroes the lever.
+- Not run in Godot (none here). Owner test: Menu > Debug info On, run autopilot, read the log path shown.
