@@ -288,3 +288,8 @@
 - scripts/farm_main.gd: three small hooks (preload/var, tick in _simulate, record after VehicleModel.step) and a message with the log path when Debug is switched on. Nothing else touched.
 - Hypothesis 4 of the handover (latched cockpit lever fights the autopilot) is unlikely: update 6 cockpit + restored autopilot finish jobs. hud.set_auto_active already zeroes the lever.
 - Not run in Godot (none here). Owner test: Menu > Debug info On, run autopilot, read the log path shown.
+
+## 2026-10-31 - Update 10: autopilot log can be copied on the phone
+- Problem: user://autopilot_diag.log is private to the app on Android, owner could not find it.
+- Menu > "Copy autopilot log" copies the newest 60 KB of the log to the clipboard (DisplayServer.clipboard_set). Switching Debug info On now starts a fresh log.
+- Files: scripts/hud.gd (button), scripts/farm_main.gd (action), scripts/autopilot_diag.gd (tail_text, clear). Not run in Godot.
