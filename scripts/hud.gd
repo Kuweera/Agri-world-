@@ -149,6 +149,13 @@ func _build_menu(vp: Vector2) -> void:
 	debug_button.pressed.connect(_on_button.bind("debug"))
 	box.add_child(debug_button)
 
+	var log_btn := Button.new()
+	log_btn.text = "Copy autopilot log"
+	log_btn.custom_minimum_size = Vector2(590, 64)
+	log_btn.add_theme_font_size_override("font_size", 26)
+	log_btn.pressed.connect(_on_button.bind("copy_ap_log"))
+	box.add_child(log_btn)
+
 	var reset_btn := Button.new()
 	reset_btn.text = "Reset farm (tap twice)"
 	reset_btn.custom_minimum_size = Vector2(590, 64)

@@ -851,9 +851,18 @@ func _on_action(action: String) -> void:
 		hud.set_debug_visible(bool(settings["debug"]))
 		hud.set_menu_state(int(settings["quality"]), bool(settings["debug"]))
 		if bool(settings["debug"]):
-			hud.set_message("Autopilot log: " + ProjectSettings.globalize_path("user://autopilot_diag.log"), 6000)
+			ap_diag.clear()
+			hud.set_message("Autopilot log started. Run a job, then Menu > Copy autopilot log", 6000)
 		else:
 			ap_diag.flush()
+		return
+	if action == "copy_ap_log":
+		var txt: String = ap_diag.tail_text()
+		if txt == "":
+			hud.set_message("Log is empty. Turn Debug info On and run the autopilot first", 5000)
+		else:
+			DisplayServer.clipboard_set(txt)
+			hud.set_message("Log copied (%d lines). Paste it into a note or chat" % txt.count("\n"), 5000)
 		return
 	if action == "drive":
 		_enter_drive()

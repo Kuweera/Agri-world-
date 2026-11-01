@@ -19,6 +19,31 @@ var _clock := 0.0
 var _flush_t := 0.0
 var _m := {}       # per machine id: remembered state between frames
 
+# Newest part of the log as text (for the clipboard); max_bytes keeps it small enough to paste.
+func tail_text(max_bytes: int = 60000) -> String:
+	flush()
+	if not FileAccess.file_exists(LOG_PATH):
+		return ""
+	var f := FileAccess.open(LOG_PATH, FileAccess.READ)
+	if f == null:
+		return ""
+	var n := int(f.get_length())
+	if n > max_bytes:
+		f.seek(n - max_bytes)
+		f.get_line()   # drop the cut first line
+	var t := f.get_as_text()
+	f.close()
+	return t
+
+# Start a fresh log (called when Debug info is switched on).
+func clear() -> void:
+	_buf.clear()
+	_m.clear()
+	_clock = 0.0
+	var f := FileAccess.open(LOG_PATH, FileAccess.WRITE)
+	if f != null:
+		f.close()
+
 func _st(id: String) -> Dictionary:
 	if not _m.has(id):
 		_m[id] = {"active": false, "idx": -99, "work": false, "raised": false, "dir": 0, "still": 0.0,
